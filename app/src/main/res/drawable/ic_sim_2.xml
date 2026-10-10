@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SIM card with a "2" inside. Monotone: tint it from Compose (Icon tint) so it follows the theme. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- card body: clipped top-right corner -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.8"
+        android:strokeLineJoin="round"
+        android:pathData="M8,3 H14.5 L19,7.5 V19 A2,2 0 0 1 17,21 H8 A2,2 0 0 1 6,19 V5 A2,2 0 0 1 8,3 Z" />
+    <!-- digit 2 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M9.3,11.6 C9.3,10.4 10.3,9.6 11.9,9.6 C13.5,9.6 14.5,10.4 14.5,11.6 C14.5,12.5 14,13.1 13.2,13.9 L11.3,16.5 H14.6 V18 H9.2 V16.8 L12.1,13.4 C12.7,12.8 12.9,12.4 12.9,11.9 C12.9,11.4 12.5,11.1 11.9,11.1 C11.3,11.1 10.9,11.4 10.9,12 Z" />
+</vector>
