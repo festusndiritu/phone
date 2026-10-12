@@ -104,11 +104,20 @@ object Diag {
     private var file: File? = null
     private val io = Executors.newSingleThreadExecutor()
 
+    /** "1.0 (1)" from the installed package; set once in [init]. Bump versionCode/versionName in build.gradle.kts per build you hand out. */
+    @Volatile var version = "unknown"
+        private set
+
     @Synchronized
     fun init(ctx: Context) {
         if (file != null) return
         val f = File(ctx.filesDir, "diag.log")
         file = f
+        version = try {
+            val i = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+            "${i.versionName} (${i.longVersionCode})" // minSdk is 28, so longVersionCode is always available
+        } catch (_: Exception) { "unknown" }
+        log("process_start", 0, "v=$version")
         io.execute {
             try {
                 if (f.exists()) {
@@ -153,6 +162,7 @@ object Diag {
 
     fun report(all: List<Event>): String {
         val sb = StringBuilder("Dialer diagnostics (no numbers/names logged)\n")
+        sb.append("App version: $version\n")
         sb.append("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n\n")
         sb.append("== Event log (crashes and call lifecycle; t = ms since first event) ==\n")
         val t0 = all.firstOrNull()?.t ?: 0L

@@ -1046,7 +1046,8 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
             LinkRow("Share log", "Send the log to whoever is debugging") { actions.share(Diag.report(Diag.events.value)) }
             LinkRow("Clear log", null) { Diag.clear() }
         }
-        Spacer(Modifier.height(32.dp))
+        Text("Version ${Diag.version}", color = c.inkDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
+        Spacer(Modifier.height(16.dp))
     }
 }
 
