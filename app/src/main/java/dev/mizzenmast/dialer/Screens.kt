@@ -978,7 +978,6 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
     val hints by Prefs.gestureHints.collectAsState()
     val direct by Prefs.directLaunch.collectAsState()
     val diag by Prefs.diagnostics.collectAsState()
-    val favs by Prefs.showFavorites.collectAsState()
     val silence by Prefs.silenceUnknown.collectAsState()
 
     var setupOpen by rememberSaveable { mutableStateOf(false) }
@@ -1009,7 +1008,6 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
             StatusRow("Notifications", if (notif) null else "Call alerts", notif, "Allow", actions.requestNotifications)
             if (Build.VERSION.SDK_INT >= 34) StatusRow("Full-screen alerts", if (fsi) null else "Show calls over the lock screen", fsi, "Open") { actions.open(SettingsTarget.FullScreen) }
             StatusRow("Display over other apps", if (overlay) null else "Optional", overlay, "Open") { actions.open(SettingsTarget.Overlay) }
-            StatusRow("Unrestricted battery", if (battery) null else "Optional", battery, "Open") { actions.open(SettingsTarget.Battery) }
         }
 
         SectionLabel("CALLS")
@@ -1025,25 +1023,28 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
                 android.content.pm.PackageManager.DONT_KILL_APP
             )
         }
+        ToggleRow("Open call screen on ring", "Opens by itself while the phone is awake and unlocked", direct) { Prefs.set("direct_launch", Prefs.directLaunch, it) }
         NavRow(Icons.Rounded.Notifications, "Call notifications", null) { actions.open(SettingsTarget.Notifications) }
+
+        SectionLabel("KEEP CALLS RELIABLE")
+        StatusRow("Unrestricted battery", if (battery) null else "Lets calls show on screen when power saving is on", battery, "Allow") { actions.open(SettingsTarget.Battery) }
+        LinkRow("Power saving & background", "If calls ring but the screen never opens, allow auto-start here and add this app to the phone's power saving allowed list") { actions.open(SettingsTarget.AppDetails) }
 
         SectionLabel("PREFERENCES")
         Row(Modifier.padding(horizontal = 20.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("System", "Light", "Dark").forEachIndexed { i, l -> TextPill(l, { Prefs.setTheme(i) }, filled = theme == i) }
         }
-        ToggleRow("Favorites row", "Starred contacts at the top of Recents", favs) { Prefs.set("show_favorites", Prefs.showFavorites, it) }
         ToggleRow("Haptic feedback", null, haptics) { Prefs.set("haptics", Prefs.haptics, it) }
         ToggleRow("Keypad tones", null, tones) { Prefs.set("keypad_tones", Prefs.keypadTones, it) }
         ToggleRow("Swipe hint on incoming calls", null, hints) { Prefs.set("gesture_hints", Prefs.gestureHints, it) }
-        ToggleRow("Open call screen on ring", "Android may still block this", direct) { Prefs.set("direct_launch", Prefs.directLaunch, it) }
 
         Spacer(Modifier.height(8.dp))
         ExpandRow(Icons.Rounded.Build, c.inkDim, "Troubleshooting", null, troubleOpen) { troubleOpen = !troubleOpen }
         if (troubleOpen) {
             LinkRow("Setup guide", "Walk through the permissions again") { Prefs.set("onboarded", Prefs.onboarded, false) }
-            ToggleRow("Diagnostic logging", "No numbers or names recorded", diag) { Prefs.set("diagnostics", Prefs.diagnostics, it) }
-            LinkRow("Call timing report", null) { vm.showDiag.value = true }
-            LinkRow("Background activity", "Allow auto-launch and background activity in App info") { actions.open(SettingsTarget.AppDetails) }
+            ToggleRow("Keep a log", "Crashes and call events. No numbers or names recorded", diag) { Prefs.set("diagnostics", Prefs.diagnostics, it) }
+            LinkRow("Share log", "Send the log to whoever is debugging") { actions.share(Diag.report(Diag.events.value)) }
+            LinkRow("Clear log", null) { Diag.clear() }
         }
         Spacer(Modifier.height(32.dp))
     }
@@ -1080,46 +1081,3 @@ private fun NavRow(icon: ImageVector, title: String, sub: String?, onClick: () -
 }
 
 //private fun Modifier = this
-
-// ---------- diagnostics ----------
-
-@Composable
-fun DiagnosticsScreen(vm: DialerViewModel, actions: Actions) {
-    val c = LocalColors.current
-    val events by Diag.events.collectAsState()
-    val ids = events.map { it.callId }.filter { it != 0 }.distinct().takeLast(5).reversed()
-    Overlay(onBack = { vm.showDiag.value = false }) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-            Text("Call timing", style = T.title, color = c.ink)
-            Spacer(Modifier.height(8.dp))
-            Text("From Telecom handing over the call to the first frame. Excludes modem, ringtone and display time.", color = c.inkDim, fontSize = 13.sp)
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextPill("Share report", { actions.share(Diag.report(events)) }, filled = true)
-                TextPill("Clear", { Diag.clear() }, danger = true)
-            }
-            if (ids.isEmpty()) Text("\nNo calls recorded. Turn on logging, then take a call.", color = c.inkDim)
-            ids.forEach { id ->
-                Spacer(Modifier.height(20.dp))
-                Text("Call #$id", color = c.ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                Diag.intervals(id, events).forEach { iv ->
-                    Column(Modifier.padding(vertical = 6.dp)) {
-                        Row {
-                            Text(iv.label, color = c.ink, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                            Text(iv.ms?.let { "$it ms" } ?: "n/a", color = if (iv.ms == null) c.inkDim else c.accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        if (iv.note.isNotEmpty()) Text(iv.note, color = c.inkDim, fontSize = 11.sp)
-                    }
-                }
-            }
-            Spacer(Modifier.height(24.dp))
-            Text("RAW EVENTS (latest 60)", style = T.label, color = c.inkDim)
-            Spacer(Modifier.height(6.dp))
-            val t0 = events.firstOrNull()?.t ?: 0L
-            events.takeLast(60).forEach {
-                Text("+${it.t - t0} ${it.name} #${it.callId} ${it.detail}", color = c.inkDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-            }
-            Spacer(Modifier.height(32.dp))
-        }
-    }
-}

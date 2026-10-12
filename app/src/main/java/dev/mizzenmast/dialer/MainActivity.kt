@@ -179,7 +179,7 @@ class MainActivity : ComponentActivity() {
                 if (Build.VERSION.SDK_INT >= 34) Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg)
                 else Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
             SettingsTarget.Overlay -> Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg)
-            SettingsTarget.Battery -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            SettingsTarget.Battery -> Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg)
             SettingsTarget.Sound -> Intent(Settings.ACTION_SOUND_SETTINGS)
             SettingsTarget.CallingAccounts -> Intent(TelecomManager.ACTION_CHANGE_PHONE_ACCOUNTS)
             SettingsTarget.Blocked -> getSystemService(TelecomManager::class.java).createManageBlockedNumbersIntent()
@@ -234,7 +234,6 @@ fun App(vm: DialerViewModel, actions: Actions) {
     val detailLog by vm.detailLog.collectAsState()
     val historyLog by vm.historyLog.collectAsState()
     val detailContact by vm.detailContact.collectAsState()
-    val showDiag by vm.showDiag.collectAsState()
     val index by vm.index.collectAsState()
     val dialerOpen by vm.dialerOpen.collectAsState()
     val onboarded by Prefs.onboarded.collectAsState()
@@ -251,14 +250,13 @@ fun App(vm: DialerViewModel, actions: Actions) {
                 1 -> ContactsScreen(vm, actions)
                 else -> SettingsScreen(vm, actions)
             }
-            if (tab != 2 && detailLog == null && historyLog == null && detailContact == null && !showDiag) {
+            if (tab != 2 && detailLog == null && historyLog == null && detailContact == null) {
                 DialerFab(Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 20.dp)) { vm.dialerOpen.value = true }
             }
             // Overlays (each handles its own back press)
             detailLog?.let { CallDetailScreen(vm, actions, it, index.find(it.number)) }
             historyLog?.let { CallHistoryScreen(vm, it, index.find(it.number)) }
             detailContact?.let { ContactDetailScreen(vm, actions, it) }
-            if (showDiag) DiagnosticsScreen(vm, actions)
         }
         BottomBar(tab) { vm.tab.value = it }
     }

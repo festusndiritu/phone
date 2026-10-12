@@ -35,7 +35,6 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
     /** Entry whose full call history is open (same person/number as [detailLog]). */
     val historyLog = MutableStateFlow<LogEntry?>(null)
     val detailContact = MutableStateFlow<Contact?>(null)
-    val showDiag = MutableStateFlow(false)
     val tick = MutableStateFlow(0)
 
     private val _contacts = MutableStateFlow<Load<List<Contact>>>(Load.Loading)

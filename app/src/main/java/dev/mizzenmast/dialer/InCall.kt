@@ -4,14 +4,9 @@ package dev.mizzenmast.dialer
 
 import android.content.Intent
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.PowerManager
 import android.telecom.Call
 import android.telecom.CallAudioState
-import android.view.FrameMetrics
-import android.view.ViewTreeObserver
-import android.view.Window
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -60,7 +55,6 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -78,12 +72,10 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.milliseconds
 
 class InCallActivity : ComponentActivity() {
     private var proxLock: PowerManager.WakeLock? = null
-    private var frameListener: Window.OnFrameMetricsAvailableListener? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,7 +87,6 @@ class InCallActivity : ComponentActivity() {
         setShowWhenLocked(true); setTurnScreenOn(true)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enableEdgeToEdge()
-        watchFrames(cid)
 
         setContent {
             val mode by Prefs.theme.collectAsState()
@@ -135,29 +126,6 @@ class InCallActivity : ComponentActivity() {
         startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN_DIALER, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    /** Records first predraw and first completed frame; the Compose-level frame is logged by the call screens. */
-    private fun watchFrames(cid: Int) {
-        val dv = window.decorView
-        dv.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
-            override fun onPreDraw(): Boolean {
-                dv.viewTreeObserver.removeOnPreDrawListener(this)
-                Diag.log("first_predraw", cid)
-                return true
-            }
-        })
-        // Frame metrics are delivered in batches, so the callback can fire several times after the first
-        // removal (typical for outgoing calls, where the dialing UI animates immediately). Only act once.
-        val done = AtomicBoolean(false)
-        lateinit var l: Window.OnFrameMetricsAvailableListener
-        l = Window.OnFrameMetricsAvailableListener { w, fm, _ ->
-            if (!done.compareAndSet(false, true)) return@OnFrameMetricsAvailableListener
-            Diag.log("first_frame_done", cid, "totalMs=${fm.getMetric(FrameMetrics.TOTAL_DURATION) / 1_000_000}")
-            runCatching { w.removeOnFrameMetricsAvailableListener(l) }
-        }
-        frameListener = l
-        window.addOnFrameMetricsAvailableListener(l, Handler(Looper.getMainLooper()))
-    }
-
     private fun updateProximity(list: List<CallInfo>, audio: CallAudioState?) {
         val active = list.any { !it.isEnded && (it.state == Call.STATE_ACTIVE || it.state == Call.STATE_DIALING || it.state == Call.STATE_CONNECTING) }
         val need = active && audio?.route == CallAudioState.ROUTE_EARPIECE
@@ -183,9 +151,6 @@ class InCallActivity : ComponentActivity() {
     override fun onDestroy() {
         Diag.log("activity_destroyed", CallManager.currentCallId(), "finishing=$isFinishing")
         releaseProximity()
-        // If the activity dies before the first frame completes, don't leave the listener attached.
-        frameListener?.let { runCatching { window.removeOnFrameMetricsAvailableListener(it) } }
-        frameListener = null
         super.onDestroy()
     }
 }
@@ -229,7 +194,6 @@ private fun IncomingScreen(call: CallInfo, others: List<CallInfo>) {
     val c = LocalColors.current
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val hints by Prefs.gestureHints.collectAsState()
-    LaunchedEffect(call.id) { withFrameNanos { }; Diag.log("ui_frame", call.id, "screen=incoming") }
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(24.dp))
         Text(if (others.isEmpty()) "INCOMING CALL" else "CALL WAITING", style = T.label, color = c.accent)
@@ -299,7 +263,6 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
     val now by produceState(System.currentTimeMillis(), isActive) {
         while (isActive) { value = System.currentTimeMillis(); delay(1000.milliseconds) }
     }
-    LaunchedEffect(call.id) { withFrameNanos { }; Diag.log("ui_frame", call.id, "screen=${stateName(call.state)}") }
 
     val others = top.filter { it.id != call.id && !it.isEnded }
     val status = when (call.state) {

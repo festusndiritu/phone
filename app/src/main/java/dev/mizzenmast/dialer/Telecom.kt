@@ -137,9 +137,7 @@ object CallManager {
         refs[id] = call
         val st = stateOf(call)
         incoming[id] = st == Call.STATE_RINGING
-        val created = call.details.creationTimeMillis
-        val lag = if (created > 0) System.currentTimeMillis() - created else -1L
-        Diag.log("call_added", id, "state=${stateName(st)} lagMs=$lag sinceBindMs=${svc.sinceBind()}")
+        Diag.log("call_added", id, "state=${stateName(st)}")
         val cb = Cb(id)
         callbacks[id] = cb
         call.registerCallback(cb)

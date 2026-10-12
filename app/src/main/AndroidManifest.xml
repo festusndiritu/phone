@@ -24,6 +24,8 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Proximity wake lock (screen off at ear) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lets Settings show the one-tap "don't optimize battery" prompt for this app -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 

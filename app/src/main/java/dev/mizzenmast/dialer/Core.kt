@@ -98,8 +98,6 @@ object Diag {
         fun kv(key: String): String? = detail.split(' ').firstOrNull { it.startsWith("$key=") }?.substringAfter('=')
     }
 
-    data class Interval(val label: String, val ms: Long?, val note: String)
-
     private const val MAX = 600
     private val _events = MutableStateFlow<List<Event>>(emptyList())
     val events: StateFlow<List<Event>> = _events
@@ -153,45 +151,10 @@ object Diag {
         io.execute { try { file?.delete() } catch (_: Exception) { } }
     }
 
-    /** Intervals the app can actually observe. Anything before onCallAdded/Telecom creation is invisible to us. */
-    fun intervals(callId: Int, all: List<Event>): List<Interval> {
-        val m = HashMap<String, Event>()
-        all.filter { it.callId == callId }.forEach { m.putIfAbsent(it.name, it) }
-        fun d(a: String, b: String): Long? {
-            val x = m[a] ?: return null
-            val y = m[b] ?: return null
-            return y.t - x.t
-        }
-        fun kv(n: String, k: String) = m[n]?.kv(k)?.toLongOrNull()?.takeIf { it >= 0 }
-        return listOf(
-            Interval("Telecom created call → app callback", kv("call_added", "lagMs"),
-                "Wall clock. Includes process start + service bind. Time before Telecom created the call is not visible."),
-            Interval("Service bound → onCallAdded", kv("call_added", "sinceBindMs"), "Monotonic."),
-            Interval("onCallAdded → notification posted", d("call_added", "notif_posted"),
-                "notify() returned; does not prove it was drawn."),
-            Interval("onCallAdded → activity launch requested", d("call_added", "activity_launch_attempt"),
-                "startActivity() called; Android may silently block background launches."),
-            Interval("onCallAdded → activity onCreate", d("call_added", "activity_created"),
-                "Only present if the activity actually started."),
-            Interval("Activity onCreate → first frame done", d("activity_created", "first_frame_done"), "FrameMetrics callback."),
-            Interval("Activity onCreate → call UI composed + frame", d("activity_created", "ui_frame"), "Compose content drawn."),
-            Interval("onCallAdded → call UI frame (app-side total)", d("call_added", "ui_frame"),
-                "Largest app-visible delay before pixels."),
-            Interval("Answer tap → ACTIVE", d("answer_tapped", "state_ACTIVE"), "Telecom/network answer latency."),
-            Interval("Decline tap → DISCONNECTED", d("decline_tapped", "state_DISCONNECTED"), "")
-        )
-    }
-
     fun report(all: List<Event>): String {
         val sb = StringBuilder("Dialer diagnostics (no numbers/names logged)\n")
         sb.append("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n\n")
-        val ids = all.map { it.callId }.filter { it != 0 }.distinct()
-        for (id in ids) {
-            sb.append("== Call #$id ==\n")
-            intervals(id, all).forEach { sb.append("${it.label}: ${it.ms?.let { v -> "$v ms" } ?: "n/a"}\n") }
-            sb.append('\n')
-        }
-        sb.append("== Raw events (t = monotonic ms) ==\n")
+        sb.append("== Event log (crashes and call lifecycle; t = ms since first event) ==\n")
         val t0 = all.firstOrNull()?.t ?: 0L
         all.forEach { sb.append("+${it.t - t0} ${it.name} call=${it.callId} ${it.detail}\n") }
         return sb.toString()
