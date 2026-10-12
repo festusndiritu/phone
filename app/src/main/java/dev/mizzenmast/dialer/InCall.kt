@@ -380,7 +380,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                 val speaker = route == CallAudioState.ROUTE_SPEAKER
                 val multi = (mask and (CallAudioState.ROUTE_BLUETOOTH or CallAudioState.ROUTE_WIRED_HEADSET)) != 0
                 val btName = remember(audio) {
-                    if (route == CallAudioState.ROUTE_BLUETOOTH) try { audio?.activeBluetoothDevice?.name } catch (e: Exception) { null } else null
+                    if (route == CallAudioState.ROUTE_BLUETOOTH) try { audio?.activeBluetoothDevice?.name } catch (e: SecurityException) { null } // needs BLUETOOTH_CONNECT, which the user may have denied else null
                 }
                 val (routeIcon, routeLabel) = when (route) {
                     CallAudioState.ROUTE_SPEAKER -> Icons.Rounded.VolumeUp to "Speaker"

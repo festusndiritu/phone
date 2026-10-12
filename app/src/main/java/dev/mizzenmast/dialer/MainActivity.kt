@@ -170,6 +170,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // The one-tap battery prompt is fine for a sideloaded app, but Google Play restricts it. If this is ever published on Play,
+    // use Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS instead and drop the REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission.
+    @android.annotation.SuppressLint("BatteryLife")
     private fun open(t: SettingsTarget) {
         val pkg = "package:$packageName".toUri()
         val i = when (t) {

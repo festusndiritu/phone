@@ -223,7 +223,7 @@ fun FilterChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: M
 
 /** Placeholder rows shown while a list loads: same geometry as a real row, so nothing jumps when the data arrives. */
 @Composable
-fun ListSkeleton(rows: Int = 9, modifier: Modifier = Modifier) {
+fun ListSkeleton(modifier: Modifier = Modifier, rows: Int = 9) {
     val c = LocalColors.current
     val motion = rememberMotionEnabled()
     val breathe = if (motion) rememberInfiniteTransition(label = "skeleton")

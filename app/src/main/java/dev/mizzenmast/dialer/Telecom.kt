@@ -691,7 +691,7 @@ object CallNotifications {
             .build()
         if (useFg && svc != null) {
             try {
-                ServiceCompat.startForeground(svc, ID_ONGOING, build(true), ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+                ServiceCompat.startForeground(svc, ID_ONGOING, build(true), if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL else 0)
                 fgOn = true
                 return
             } catch (e: Exception) {
@@ -745,6 +745,8 @@ class UnknownCallerScreeningService : CallScreeningService() {
             val number = details.handle?.schemeSpecificPart
             silence = number.isNullOrBlank() || ContactsRepo.lookup(this, number) == null
         }
-        respondToCall(details, CallResponse.Builder().setSilenceCall(silence).build())
+        val response = CallResponse.Builder()
+        if (Build.VERSION.SDK_INT >= 29) response.setSilenceCall(silence) // Android 9 cannot silence, so unknown callers just ring there
+        respondToCall(details, response.build())
     }
 }
