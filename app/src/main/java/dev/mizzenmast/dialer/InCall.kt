@@ -2,6 +2,23 @@
 
 package dev.mizzenmast.dialer
 
+import android.Manifest
+import android.graphics.SurfaceTexture
+import android.view.Surface
+import android.view.TextureView
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.rounded.Cameraswitch
+import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.VideocamOff
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.viewinterop.AndroidView
 import android.content.Intent
 import android.os.Bundle
 import android.os.PowerManager
@@ -25,6 +42,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -96,6 +114,9 @@ class InCallActivity : ComponentActivity() {
         if (savedInstanceState == null) consumeIntent(intent)
 
         lifecycleScope.launch {
+            CallManager.notices.collect { Toast.makeText(this@InCallActivity, it, Toast.LENGTH_SHORT).show() }
+        }
+        lifecycleScope.launch {
             combine(CallManager.calls, CallManager.audio) { l, a -> l to a }.collect { (list, audio) ->
                 if (list.isEmpty()) finishAndRemoveTask() else updateProximity(list, audio)
             }
@@ -112,6 +133,7 @@ class InCallActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         CallNotifications.uiResumed = true
+        CallManager.setUiVisible(true)
         Diag.log("activity_resumed", CallManager.currentCallId())
     }
 
@@ -128,7 +150,8 @@ class InCallActivity : ComponentActivity() {
 
     private fun updateProximity(list: List<CallInfo>, audio: CallAudioState?) {
         val active = list.any { !it.isEnded && (it.state == Call.STATE_ACTIVE || it.state == Call.STATE_DIALING || it.state == Call.STATE_CONNECTING) }
-        val need = active && audio?.route == CallAudioState.ROUTE_EARPIECE
+        val videoOn = list.any { it.isVideo && !it.isEnded } // face is not at the ear during video
+        val need = active && !videoOn && audio?.route == CallAudioState.ROUTE_EARPIECE
         val pm = getSystemService(PowerManager::class.java)
         if (need) {
             if (proxLock == null && pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
@@ -144,6 +167,7 @@ class InCallActivity : ComponentActivity() {
 
     override fun onPause() {
         CallNotifications.uiResumed = false
+        CallManager.setUiVisible(false) // releases the camera while we are in the background
         Diag.log("activity_paused", CallManager.currentCallId(), "finishing=$isFinishing")
         super.onPause()
     }
@@ -164,11 +188,14 @@ fun InCallRoot(onAddCall: () -> Unit) {
     val live = top.filter { !it.isEnded }
     val ringing = live.firstOrNull { it.state == Call.STATE_RINGING }
     val primary = CallManager.pickPrimary(live.ifEmpty { top })
-    Box(Modifier.fillMaxSize().background(c.bg).systemBarsPadding()) {
+    val showVideo = ringing == null && primary != null && primary.isVideo && primary.state == Call.STATE_ACTIVE
+    Box(Modifier.fillMaxSize().background(if (showVideo) Color.Black else c.bg).then(if (showVideo) Modifier else Modifier.systemBarsPadding())) {
         when {
             ringing != null -> IncomingScreen(ringing, live.filter { it.id != ringing.id })
+            primary != null && showVideo -> VideoCallScreen(primary, audio)
             primary != null -> OngoingScreen(primary, top, calls, audio, onAddCall)
         }
+        primary?.takeIf { it.videoRequest != 0 && !it.isEnded }?.let { VideoRequestDialog(it) }
     }
 }
 
@@ -196,7 +223,7 @@ private fun IncomingScreen(call: CallInfo, others: List<CallInfo>) {
     val hints by Prefs.gestureHints.collectAsState()
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(24.dp))
-        Text(if (others.isEmpty()) "INCOMING CALL" else "CALL WAITING", style = T.label, color = c.accent)
+        Text(when { others.isNotEmpty() -> "CALL WAITING"; call.isVideo -> "INCOMING VIDEO CALL"; else -> "INCOMING CALL" }, style = T.label, color = c.accent)
         Spacer(Modifier.height(28.dp))
         RingingAvatar(call.name, call.photo, 132.dp)
         Spacer(Modifier.height(24.dp))
@@ -215,7 +242,11 @@ private fun IncomingScreen(call: CallInfo, others: List<CallInfo>) {
                 TextPill("Silence", { CallManager.silence(ctx) })
             }
         } else {
-            TextPill("Silence", { CallManager.silence(ctx) })
+            val answerVideo = rememberCameraGate { ok -> CallManager.answerVideo(call.id, ok) }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TextPill("Silence", { CallManager.silence(ctx) })
+                if (call.isVideo) TextPill("Answer with video", { answerVideo() }, filled = true)
+            }
         }
         Spacer(Modifier.height(24.dp))
         SwipeDecision(call.id, onAnswer = { CallManager.answer(call.id) }, onDecline = { CallManager.reject(call.id) })
@@ -264,6 +295,10 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
         while (isActive) { value = System.currentTimeMillis(); delay(1000.milliseconds) }
     }
 
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val askVideo = rememberCameraGate { ok ->
+        if (ok) CallManager.requestVideo(call.id, true) else Toast.makeText(ctx, "Camera permission is needed for video", Toast.LENGTH_SHORT).show()
+    }
     val others = top.filter { it.id != call.id && !it.isEnded }
     val status = when (call.state) {
         Call.STATE_ACTIVE -> if (call.connectedAt > 0) fmtDur((now - call.connectedAt) / 1000) else "Connected"
@@ -365,6 +400,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                         if (call.state == Call.STATE_HOLDING) "Resume" else "Hold", call.state == Call.STATE_HOLDING,
                         call.canHold && connected) { CallManager.toggleHold(call.id) },
                     Ctl(Icons.Rounded.PersonAdd, "Add call", false, connected && others.isEmpty(), onAddCall),
+                    if (call.canVideo && !call.isVideo) Ctl(Icons.Rounded.Videocam, "Video", false, call.state == Call.STATE_ACTIVE) { askVideo() } else null,
                     when {
                         call.canMerge && connected -> Ctl(Icons.Rounded.CallMerge, "Merge", false, true) { CallManager.merge(call.id) }
                         heldOther != null && isActive -> Ctl(Icons.Rounded.SwapCalls, "Swap", false, true) { CallManager.swapTo(heldOther.id) }
@@ -405,6 +441,117 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                         Text(label, color = if (cur == r) c.accent else c.ink, fontSize = 17.sp, fontWeight = if (cur == r) FontWeight.SemiBold else FontWeight.Normal)
                     }
                 }
+            }
+        }
+    }
+}
+
+// ---------- video ----------
+
+/** Runs [onResult] with true if the camera permission is (or just became) granted. */
+@Composable
+private fun rememberCameraGate(onResult: (Boolean) -> Unit): () -> Unit {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val latest by rememberUpdatedState(onResult)
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { latest(it) }
+    return remember(launcher) { { if (ctx.granted(Manifest.permission.CAMERA)) latest(true) else launcher.launch(Manifest.permission.CAMERA) } }
+}
+
+/** A TextureView whose Surface is handed to the carrier's video provider (null again when it goes away). */
+@Composable
+private fun VideoSurface(modifier: Modifier, onSurface: (Surface?) -> Unit) {
+    val latest by rememberUpdatedState(onSurface)
+    AndroidView(modifier = modifier, factory = { ctx ->
+        TextureView(ctx).apply {
+            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                private var surface: Surface? = null
+                override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) { surface = Surface(st); latest(surface) }
+                override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, width: Int, height: Int) {}
+                override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean { latest(null); surface?.release(); surface = null; return true }
+                override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+            }
+        }
+    })
+}
+
+@Composable
+private fun VideoBtn(icon: ImageVector, desc: String, on: Boolean = false, onClick: () -> Unit) {
+    val tick = rememberTick()
+    Box(
+        Modifier.size(54.dp).clip(CircleShape).background(if (on) Color.White else Color.White.copy(alpha = 0.18f))
+            .clickable(role = Role.Button, onClickLabel = desc, onClick = { tick(); onClick() }),
+        contentAlignment = Alignment.Center
+    ) { Icon(icon, desc, tint = if (on) Color.Black else Color.White) }
+}
+
+@Suppress("DEPRECATION")
+@Composable
+private fun VideoCallScreen(call: CallInfo, audio: CallAudioState?) {
+    val c = LocalColors.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val cfg = LocalConfiguration.current
+    val ui by CallManager.video.collectAsState()
+    val now by produceState(System.currentTimeMillis()) { while (true) { value = System.currentTimeMillis(); delay(1000.milliseconds) } }
+    val speaker = audio?.route == CallAudioState.ROUTE_SPEAKER
+    val muted = audio?.isMuted == true
+    val remoteAspect = if (ui.peerW > 0 && ui.peerH > 0) ui.peerW.toFloat() / ui.peerH else 0f
+
+    // Video calls start on the loudspeaker, like Google Phone.
+    LaunchedEffect(call.id) { if (audio?.route == CallAudioState.ROUTE_EARPIECE) CallManager.setRoute(CallAudioState.ROUTE_SPEAKER) }
+    LaunchedEffect(call.id, cfg.orientation) {
+        val rotation = (ctx as? android.app.Activity)?.windowManager?.defaultDisplay?.rotation ?: 0
+        CallManager.setOrientation(call.id, rotation * 90)
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            VideoSurface(
+                if (remoteAspect > 0f) Modifier.aspectRatio(remoteAspect) else Modifier.fillMaxSize(),
+                onSurface = { CallManager.setDisplaySurface(call.id, it) }
+            )
+        }
+        Column(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(20.dp)) {
+            Text(call.title(), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
+            Text(if (call.connectedAt > 0) fmtDur((now - call.connectedAt) / 1000) else "Connected", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
+        }
+        if (call.sendingVideo && ui.camOn) {
+            VideoSurface(
+                Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp).width(100.dp).aspectRatio(ui.previewAspect)
+                    .clip(RoundedCornerShape(16.dp)).graphicsLayer { scaleX = if (ui.front) -1f else 1f },
+                onSurface = { CallManager.setPreviewSurface(call.id, it) }
+            )
+        }
+        Row(
+            Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically
+        ) {
+            VideoBtn(if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, "Mute", muted) { CallManager.setMuted(!muted) }
+            if (call.sendingVideo) {
+                VideoBtn(if (ui.camOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, "Camera", !ui.camOn) { CallManager.toggleCamera() }
+                VideoBtn(Icons.Rounded.Cameraswitch, "Flip camera") { CallManager.flipCamera() }
+            }
+            VideoBtn(Icons.Rounded.VolumeUp, "Speaker", speaker) {
+                CallManager.setRoute(if (speaker) CallAudioState.ROUTE_EARPIECE else CallAudioState.ROUTE_SPEAKER)
+            }
+            VideoBtn(Icons.Rounded.PhoneInTalk, "Back to voice call") { CallManager.requestVideo(call.id, false) }
+            RoundButton(Icons.Rounded.CallEnd, "End call", c.decline, Color.White, 54.dp) { CallManager.disconnect(call.id) }
+        }
+    }
+}
+
+@Composable
+private fun VideoRequestDialog(call: CallInfo) {
+    val c = LocalColors.current
+    val accept = rememberCameraGate { ok -> CallManager.answerVideoRequest(call.id, true, receiveOnly = !ok) }
+    Dialog(onDismissRequest = { CallManager.answerVideoRequest(call.id, false) }) {
+        Column(Modifier.clip(RoundedCornerShape(24.dp)).background(c.surface).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Rounded.Videocam, null, tint = c.accent, modifier = Modifier.size(32.dp))
+            Spacer(Modifier.height(12.dp))
+            Text("${call.title()} wants to switch to video", color = c.ink, fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TextPill("Decline", { CallManager.answerVideoRequest(call.id, false) })
+                TextPill("Accept", { accept() }, filled = true)
             }
         }
     }

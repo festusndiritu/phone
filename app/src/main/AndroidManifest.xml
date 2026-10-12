@@ -24,10 +24,14 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Proximity wake lock (screen off at ear) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Carrier video calls: the phone's video provider opens the camera, but the dialer role is granted it through this declaration -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- Lets Settings show the one-tap "don't optimize battery" prompt for this app -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
     <application
         android:icon="@mipmap/ic_launcher"
