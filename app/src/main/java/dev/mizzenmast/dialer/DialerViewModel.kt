@@ -150,7 +150,10 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun reloadContacts() {
         _contacts.value = try {
-            Load.Ready(withContext(Dispatchers.IO) { ContactsRepo.loadAll(ctx) })
+            val all = withContext(Dispatchers.IO) { ContactsRepo.loadAll(ctx) }
+            val starred = all.count { it.starred }
+            Diag.log("contacts_loaded", 0, "n=" + all.size + " starred=" + starred) // counts only; shows up in Share log
+            Load.Ready(all)
         } catch (e: Exception) { Load.Failed(e.message ?: "Could not read contacts") }
     }
 

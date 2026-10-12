@@ -69,7 +69,8 @@ object Prefs {
         gestureHints.value = p.getBoolean("gesture_hints", true)
         directLaunch.value = p.getBoolean("direct_launch", true)
         diagnostics.value = p.getBoolean("diagnostics", true)
-        showFavorites.value = p.getBoolean("show_favorites", true)
+        // New key: the old "show_favorites" could have been left off by an earlier build whose Settings toggle no longer exists.
+        showFavorites.value = p.getBoolean("show_favorites_row", true)
         silenceUnknown.value = p.getBoolean("silence_unknown", false)
         onboarded.value = p.getBoolean("onboarded", false)
     }

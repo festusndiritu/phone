@@ -136,7 +136,9 @@ object CallManager {
 
     // ---- video ----
 
-    data class VideoUi(val camOn: Boolean = true, val front: Boolean = true, val peerW: Int = 0, val peerH: Int = 0, val previewAspect: Float = 0.75f)
+    data class VideoUi(val camOn: Boolean = true, val front: Boolean = true, val peerW: Int = 0, val peerH: Int = 0, val previewAspect: Float = 0.75f,
+        /** Camera is being swapped front/rear (released, then re-opened). */ val switching: Boolean = false,
+        /** We asked to go to video and haven't heard back yet. */ val pendingUp: Boolean = false)
 
     private val _video = MutableStateFlow(VideoUi())
     val video: StateFlow<VideoUi> = _video
@@ -146,6 +148,8 @@ object CallManager {
     private val videoCbs = HashMap<Int, InCallService.VideoCall.Callback>()
     private val camBound = HashMap<Int, String>()
     @Volatile private var uiVisible = false
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val videoReqAt = HashMap<Int, Long>()
 
     // ---- lifecycle (called by DialerInCallService) ----
 
@@ -225,6 +229,10 @@ object CallManager {
     private class Cb(val id: Int) : Call.Callback() {
         override fun onStateChanged(call: Call, state: Int) {
             Diag.log("state_${stateName(state)}", id)
+            if (state == Call.STATE_DISCONNECTED) {
+                val dc = call.details.disconnectCause
+                Diag.log("end_cause", id, "code=${dc?.code} reason=${dc?.reason?.take(48)} sinceVideoReq=${videoReqAt[id]?.let { android.os.SystemClock.elapsedRealtime() - it } ?: -1}ms")
+            }
             if (state == Call.STATE_ACTIVE) Diag.log("video_caps", id, "canUpgrade=${call.canUpgradeToVideo()} caps=${call.details.callCapabilities} videoState=${call.details.videoState} hasVideoCall=${call.videoCall != null}")
             syncVideo(id, call)
             publish()
@@ -359,7 +367,8 @@ object CallManager {
                 publish()
             }
             override fun onSessionModifyResponseReceived(status: Int, requestedProfile: VideoProfile?, responseProfile: VideoProfile?) {
-                Diag.log("video_response", id, "status=$status")
+                Diag.log("video_response", id, "status=$status after=${videoReqAt.remove(id)?.let { android.os.SystemClock.elapsedRealtime() - it } ?: -1}ms")
+                _video.value = _video.value.copy(pendingUp = false)
                 when (status) {
                     Connection.VideoProvider.SESSION_MODIFY_REQUEST_REJECTED_BY_REMOTE -> _notices.tryEmit("Video request declined")
                     Connection.VideoProvider.SESSION_MODIFY_REQUEST_TIMED_OUT -> _notices.tryEmit("No answer to the video request")
@@ -386,7 +395,7 @@ object CallManager {
         if (call.videoCall == null) return
         hookVideo(id, call)
         val ctx = appCtx ?: return
-        val want = uiVisible && _video.value.camOn && stateOf(call) == Call.STATE_ACTIVE &&
+        val want = uiVisible && _video.value.camOn && !_video.value.switching && stateOf(call) == Call.STATE_ACTIVE &&
             VideoProfile.isTransmissionEnabled(call.details.videoState)
         if (want) {
             val cam = cameraId(ctx, _video.value.front) ?: return
@@ -402,15 +411,40 @@ object CallManager {
 
     fun setUiVisible(visible: Boolean) { uiVisible = visible; syncAllVideo() }
     fun toggleCamera() { _video.value = _video.value.copy(camOn = !_video.value.camOn); syncAllVideo() }
-    fun flipCamera() { _video.value = _video.value.copy(front = !_video.value.front); syncAllVideo() }
+    /**
+     * Flip = the same sequence that already works by hand (camera off, then on): release the camera, let the provider
+     * and the self-view surface settle, then bind the other camera. Taps during the swap are ignored.
+     */
+    fun flipCamera() {
+        val v = _video.value
+        if (v.switching || !v.camOn) return
+        val toFront = !v.front
+        val ctx = appCtx
+        if (ctx != null && cameraId(ctx, toFront) == null) {
+            _notices.tryEmit(if (toFront) "No front camera found" else "No rear camera found")
+            return
+        }
+        _video.value = v.copy(front = toFront, switching = true)
+        syncAllVideo() // releases the current camera and hides the self-view
+        main.postDelayed({
+            _video.value = _video.value.copy(switching = false)
+            syncAllVideo() // binds the new camera; the self-view comes back with a fresh surface
+        }, 450)
+    }
     fun setPreviewSurface(id: Int, s: Surface?) = withVideo(id) { it.setPreviewSurface(s) }
     fun setDisplaySurface(id: Int, s: Surface?) = withVideo(id) { it.setDisplaySurface(s) }
     fun setOrientation(id: Int, degrees: Int) = withVideo(id) { it.setDeviceOrientation(degrees) }
 
     /** Ask the other side to switch to video (on) or back to voice (off). */
     fun requestVideo(id: Int, on: Boolean) {
+        if (on && _video.value.pendingUp) { Diag.log("video_request_ignored", id, "already_pending"); return }
         Diag.log(if (on) "video_request_out" else "video_to_voice", id)
-        withVideo(id) { it.sendSessionModifyRequest(VideoProfile(if (on) VideoProfile.STATE_BIDIRECTIONAL else VideoProfile.STATE_AUDIO_ONLY)) }
+        if (on) {
+            videoReqAt[id] = android.os.SystemClock.elapsedRealtime()
+            _video.value = _video.value.copy(pendingUp = true)
+            main.postDelayed({ _video.value = _video.value.copy(pendingUp = false) }, 45_000) // safety net if no response ever arrives
+        }
+        withVideo(id) { it.sendSessionModifyRequest(VideoProfile(if (on) VideoProfile.STATE_BIDIRECTIONAL else VideoProfile.STATE_AUDIO_ONLY, VideoProfile.QUALITY_HIGH)) }
     }
 
     /** Answer the other side's request to switch to video. [receiveOnly] accepts without sending our camera. */
@@ -422,7 +456,7 @@ object CallManager {
             else -> asked
         }
         Diag.log("video_request_answer", id, "accept=$accept state=$state")
-        withVideo(id) { it.sendSessionModifyResponse(VideoProfile(state)) }
+        withVideo(id) { it.sendSessionModifyResponse(VideoProfile(state, VideoProfile.QUALITY_HIGH)) }
         publish()
     }
 
@@ -439,7 +473,7 @@ object CallManager {
     fun rejectRinging(source: String) {
         ringing()?.let { Diag.log("decline_source", it.id, "source=$source"); reject(it.id) }
     }
-    fun disconnect(id: Int) { refs[id]?.disconnect() }
+    fun disconnect(id: Int) { Diag.log("disconnect_tapped", id); refs[id]?.disconnect() }
     fun endPrimary() { pickPrimary(topLevel())?.let { disconnect(it.id) } }
 
     fun endAndAnswer(ringingId: Int) {

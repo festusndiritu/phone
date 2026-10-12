@@ -256,7 +256,7 @@ fun dayLabel(ctx: Context, t: Long): String {
     }
 }
 
-/** Up to five starred contacts. Tap to call their first number, long-press to open the contact. Hidden in Settings > Favorites row. */
+/** Up to five starred contacts. Tap to call their first number, long-press to open the contact. Can be hidden in Settings > Appearance & interaction. */
 @Composable
 private fun FavoritesRow(favs: List<Contact>, onCall: (Contact) -> Unit, onOpen: (Contact) -> Unit) {
     val c = LocalColors.current

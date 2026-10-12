@@ -3,6 +3,12 @@
 package dev.mizzenmast.dialer
 
 import android.Manifest
+import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.os.Build
+import android.util.Rational
+import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.view.Surface
 import android.view.TextureView
@@ -13,10 +19,12 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.rounded.Cameraswitch
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.VideocamOff
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.viewinterop.AndroidView
 import android.content.Intent
@@ -94,6 +102,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 class InCallActivity : ComponentActivity() {
     private var proxLock: PowerManager.WakeLock? = null
+    private var inPip by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -108,7 +117,7 @@ class InCallActivity : ComponentActivity() {
 
         setContent {
             val mode by Prefs.theme.collectAsState()
-            DialerTheme(mode) { InCallRoot(onAddCall = ::openDialpad) }
+            DialerTheme(mode) { InCallRoot(onAddCall = ::openDialpad, inPip = inPip, onMinimize = if (canPip()) ::enterPip else null) }
         }
         Diag.log("content_set", cid)
         if (savedInstanceState == null) consumeIntent(intent)
@@ -116,11 +125,45 @@ class InCallActivity : ComponentActivity() {
         lifecycleScope.launch {
             CallManager.notices.collect { Toast.makeText(this@InCallActivity, it, Toast.LENGTH_SHORT).show() }
         }
+        // Keep the PiP window's shape and auto-enter flag in step with the call.
+        lifecycleScope.launch {
+            combine(CallManager.calls, CallManager.video) { l, v -> l to v }.collect {
+                if (canPip()) try { setPictureInPictureParams(pipParams()) } catch (_: Exception) { }
+            }
+        }
         lifecycleScope.launch {
             combine(CallManager.calls, CallManager.audio) { l, a -> l to a }.collect { (list, audio) ->
                 if (list.isEmpty()) finishAndRemoveTask() else updateProximity(list, audio)
             }
         }
+    }
+
+    private fun canPip() = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+    private fun videoCallActive() = CallManager.calls.value.any { it.parentId == null && !it.isEnded && it.isVideo && it.state == Call.STATE_ACTIVE }
+
+    private fun pipParams(): PictureInPictureParams {
+        val v = CallManager.video.value
+        val ratio = (if (v.peerW > 0 && v.peerH > 0) v.peerW.toFloat() / v.peerH else 3f / 4f).coerceIn(0.45f, 2.3f)
+        val b = PictureInPictureParams.Builder().setAspectRatio(Rational((ratio * 1000).toInt(), 1000))
+        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(videoCallActive())
+        return b.build()
+    }
+
+    /** Shrinks the call into a floating window so video keeps flowing while you use other apps. */
+    private fun enterPip() {
+        if (canPip() && videoCallActive()) try { enterPictureInPictureMode(pipParams()) } catch (_: Exception) { }
+    }
+
+    // Android 12+ enters PiP by itself (auto-enter); older versions need this nudge when you press Home or swipe away.
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < 31) enterPip()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPip = isInPictureInPictureMode
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -167,9 +210,15 @@ class InCallActivity : ComponentActivity() {
 
     override fun onPause() {
         CallNotifications.uiResumed = false
-        CallManager.setUiVisible(false) // releases the camera while we are in the background
+        // The camera is NOT released here: an activity in picture-in-picture is paused but still on screen.
         Diag.log("activity_paused", CallManager.currentCallId(), "finishing=$isFinishing")
         super.onPause()
+    }
+
+    override fun onStop() {
+        CallManager.setUiVisible(false) // really off screen (not PiP): release the camera
+        Diag.log("activity_stopped", CallManager.currentCallId(), "pip=$inPip")
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -180,7 +229,7 @@ class InCallActivity : ComponentActivity() {
 }
 
 @Composable
-fun InCallRoot(onAddCall: () -> Unit) {
+fun InCallRoot(onAddCall: () -> Unit, inPip: Boolean = false, onMinimize: (() -> Unit)? = null) {
     val calls by CallManager.calls.collectAsState()
     val audio by CallManager.audio.collectAsState()
     val c = LocalColors.current
@@ -192,7 +241,7 @@ fun InCallRoot(onAddCall: () -> Unit) {
     Box(Modifier.fillMaxSize().background(if (showVideo) Color.Black else c.bg).then(if (showVideo) Modifier else Modifier.systemBarsPadding())) {
         when {
             ringing != null -> IncomingScreen(ringing, live.filter { it.id != ringing.id })
-            primary != null && showVideo -> VideoCallScreen(primary, audio)
+            primary != null && showVideo -> VideoCallScreen(primary, audio, inPip, onMinimize)
             primary != null -> OngoingScreen(primary, top, calls, audio, onAddCall)
         }
         primary?.takeIf { it.videoRequest != 0 && !it.isEnded }?.let { VideoRequestDialog(it) }
@@ -299,6 +348,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
     val askVideo = rememberCameraGate { ok ->
         if (ok) CallManager.requestVideo(call.id, true) else Toast.makeText(ctx, "Camera permission is needed for video", Toast.LENGTH_SHORT).show()
     }
+    val vui by CallManager.video.collectAsState()
     val others = top.filter { it.id != call.id && !it.isEnded }
     val status = when (call.state) {
         Call.STATE_ACTIVE -> if (call.connectedAt > 0) fmtDur((now - call.connectedAt) / 1000) else "Connected"
@@ -379,15 +429,19 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                 val mask = audio?.supportedRouteMask ?: 0
                 val speaker = route == CallAudioState.ROUTE_SPEAKER
                 val multi = (mask and (CallAudioState.ROUTE_BLUETOOTH or CallAudioState.ROUTE_WIRED_HEADSET)) != 0
-                val btName = remember(audio) {
-                    if (route == CallAudioState.ROUTE_BLUETOOTH) try { audio?.activeBluetoothDevice?.name } catch (e: SecurityException) { null } // needs BLUETOOTH_CONNECT, which the user may have denied else null
+                val btName: String? = remember(audio) {
+                    if (route == CallAudioState.ROUTE_BLUETOOTH) {
+                        try { audio?.activeBluetoothDevice?.name } catch (e: SecurityException) { null }
+                    } else null
                 }
                 val (routeIcon, routeLabel) = when (route) {
                     CallAudioState.ROUTE_SPEAKER -> Icons.Rounded.VolumeUp to "Speaker"
-                    CallAudioState.ROUTE_BLUETOOTH -> Icons.Rounded.Bluetooth to (btName?.takeIf { it.isNotBlank() }?.let { if (it.length > 11) it.take(10) + "…" else it } ?: "Bluetooth")
+                    CallAudioState.ROUTE_BLUETOOTH -> Icons.Rounded.Bluetooth to (btName?.takeIf { it.isNotBlank() }
+                        ?.let { if (it.length > 11) it.take(10) + "…" else it } ?: "Bluetooth")
                     CallAudioState.ROUTE_WIRED_HEADSET -> Icons.Rounded.Headset to "Headset"
                     else -> Icons.Rounded.PhoneInTalk to if (multi) "Audio" else "Speaker"
                 }
+
                 val heldOther = others.firstOrNull { it.state == Call.STATE_HOLDING }
                 val controls = listOfNotNull(
                     Ctl(if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, "Mute", muted, live) { CallManager.setMuted(!muted) },
@@ -400,7 +454,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                         if (call.state == Call.STATE_HOLDING) "Resume" else "Hold", call.state == Call.STATE_HOLDING,
                         call.canHold && connected) { CallManager.toggleHold(call.id) },
                     Ctl(Icons.Rounded.PersonAdd, "Add call", false, connected && others.isEmpty(), onAddCall),
-                    if (call.canVideo && !call.isVideo) Ctl(Icons.Rounded.Videocam, "Video", false, call.state == Call.STATE_ACTIVE) { askVideo() } else null,
+                    if (call.canVideo && !call.isVideo) Ctl(Icons.Rounded.Videocam, if (vui.pendingUp) "Asking…" else "Video", vui.pendingUp, call.state == Call.STATE_ACTIVE && !vui.pendingUp) { askVideo() } else null,
                     when {
                         call.canMerge && connected -> Ctl(Icons.Rounded.CallMerge, "Merge", false, true) { CallManager.merge(call.id) }
                         heldOther != null && isActive -> Ctl(Icons.Rounded.SwapCalls, "Swap", false, true) { CallManager.swapTo(heldOther.id) }
@@ -457,12 +511,31 @@ private fun rememberCameraGate(onResult: (Boolean) -> Unit): () -> Unit {
     return remember(launcher) { { if (ctx.granted(Manifest.permission.CAMERA)) latest(true) else launcher.launch(Manifest.permission.CAMERA) } }
 }
 
+private enum class VideoFit { Fit, Fill }
+
+/**
+ * A TextureView stretches whatever the provider draws to the view's size, which is what squashed faces.
+ * This corrects it with a matrix so the picture always keeps [contentAspect] (width / height):
+ * Fit = whole picture with bars, Fill = fills the view and crops the overflow.
+ */
+private fun TextureView.applyAspect(contentAspect: Float, fit: VideoFit, mirror: Boolean) {
+    val w = width.toFloat(); val h = height.toFloat()
+    if (w <= 0f || h <= 0f || contentAspect <= 0f) { setTransform(null); return }
+    val wider = contentAspect > w / h
+    val cw: Float; val ch: Float
+    if (wider == (fit == VideoFit.Fit)) { cw = w; ch = w / contentAspect } else { ch = h; cw = h * contentAspect }
+    setTransform(Matrix().apply { setScale((if (mirror) -cw else cw) / w, ch / h, w / 2f, h / 2f) })
+}
+
 /** A TextureView whose Surface is handed to the carrier's video provider (null again when it goes away). */
 @Composable
-private fun VideoSurface(modifier: Modifier, onSurface: (Surface?) -> Unit) {
+private fun VideoSurface(modifier: Modifier, contentAspect: Float, fit: VideoFit, mirror: Boolean = false, onSurface: (Surface?) -> Unit) {
     val latest by rememberUpdatedState(onSurface)
+    val look by rememberUpdatedState(Triple(contentAspect, fit, mirror))
     AndroidView(modifier = modifier, factory = { ctx ->
         TextureView(ctx).apply {
+            isOpaque = true // no alpha blending, a little cheaper per frame
+            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> (v as TextureView).applyAspect(look.first, look.second, look.third) }
             surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                 private var surface: Surface? = null
                 override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) { surface = Surface(st); latest(surface) }
@@ -471,30 +544,48 @@ private fun VideoSurface(modifier: Modifier, onSurface: (Surface?) -> Unit) {
                 override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
             }
         }
-    })
+    }, update = { it.applyAspect(contentAspect, fit, mirror) })
 }
 
+/** Round icon with a plain-words label under it, so you can tell what a tap will do. Highlighted = the feature is currently engaged. */
 @Composable
-private fun VideoBtn(icon: ImageVector, desc: String, on: Boolean = false, onClick: () -> Unit) {
+private fun VideoBtn(icon: ImageVector, label: String, on: Boolean = false, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     val tick = rememberTick()
-    Box(
-        Modifier.size(54.dp).clip(CircleShape).background(if (on) Color.White else Color.White.copy(alpha = 0.18f))
-            .clickable(role = Role.Button, onClickLabel = desc, onClick = { tick(); onClick() }),
-        contentAlignment = Alignment.Center
-    ) { Icon(icon, desc, tint = if (on) Color.Black else Color.White) }
+    Column(
+        modifier.alpha(if (enabled) 1f else 0.38f).clip(RoundedCornerShape(16.dp)).clickable(enabled = enabled, role = Role.Button, onClickLabel = label) { tick(); onClick() }.padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            Modifier.size(54.dp).clip(CircleShape).background(if (on) Color.White else Color.White.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, null, tint = if (on) Color.Black else Color.White) }
+        Spacer(Modifier.height(6.dp))
+        Text(label, color = Color.White, fontSize = 12.sp, maxLines = 1, textAlign = TextAlign.Center)
+    }
+}
+
+/** Own composable so the once-a-second tick doesn't recompose the whole video screen. */
+@Composable
+private fun CallClock(connectedAt: Long) {
+    val now by produceState(System.currentTimeMillis()) { while (true) { value = System.currentTimeMillis(); delay(1000.milliseconds) } }
+    Text(if (connectedAt > 0) fmtDur((now - connectedAt) / 1000) else "Connected", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
 }
 
 @Suppress("DEPRECATION")
 @Composable
-private fun VideoCallScreen(call: CallInfo, audio: CallAudioState?) {
+private fun VideoCallScreen(call: CallInfo, audio: CallAudioState?, inPip: Boolean, onMinimize: (() -> Unit)?) {
     val c = LocalColors.current
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val cfg = LocalConfiguration.current
     val ui by CallManager.video.collectAsState()
-    val now by produceState(System.currentTimeMillis()) { while (true) { value = System.currentTimeMillis(); delay(1000.milliseconds) } }
     val speaker = audio?.route == CallAudioState.ROUTE_SPEAKER
     val muted = audio?.isMuted == true
     val remoteAspect = if (ui.peerW > 0 && ui.peerH > 0) ui.peerW.toFloat() / ui.peerH else 0f
+    // Keep the last good size so a momentary 0x0 report doesn't snap the picture to a different shape.
+    val lockedRemote = remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(remoteAspect) { if (remoteAspect > 0f) lockedRemote.floatValue = remoteAspect }
+    val landscape = cfg.screenWidthDp > cfg.screenHeightDp
+    val previewAspect = if (landscape) 1f / ui.previewAspect else ui.previewAspect // camera capabilities are reported portrait-first
 
     // Video calls start on the loudspeaker, like Google Phone.
     LaunchedEffect(call.id) { if (audio?.route == CallAudioState.ROUTE_EARPIECE) CallManager.setRoute(CallAudioState.ROUTE_SPEAKER) }
@@ -504,37 +595,66 @@ private fun VideoCallScreen(call: CallInfo, audio: CallAudioState?) {
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            VideoSurface(
-                if (remoteAspect > 0f) Modifier.aspectRatio(remoteAspect) else Modifier.fillMaxSize(),
-                onSurface = { CallManager.setDisplaySurface(call.id, it) }
-            )
+        VideoSurface(
+            Modifier.fillMaxSize(),
+            contentAspect = if (lockedRemote.floatValue > 0f) lockedRemote.floatValue else if (landscape) 4f / 3f else 3f / 4f,
+            fit = VideoFit.Fit,
+            onSurface = { CallManager.setDisplaySurface(call.id, it) }
+        )
+        if (!inPip) Column(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(20.dp)) {
+            if (onMinimize != null) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = 0.18f))
+                        .clickable(role = Role.Button, onClickLabel = "Minimize video", onClick = onMinimize).padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.PictureInPictureAlt, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Minimize", color = Color.White, fontSize = 13.sp)
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+            Text(call.title(), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 200.dp))
+            CallClock(call.connectedAt)
         }
-        Column(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(20.dp)) {
-            Text(call.title(), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
-            Text(if (call.connectedAt > 0) fmtDur((now - call.connectedAt) / 1000) else "Connected", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
-        }
-        if (call.sendingVideo && ui.camOn) {
+        if (!inPip && call.sendingVideo && ui.camOn && !ui.switching) {
+            // Fixed-size self view: the picture is cropped to fit, never stretched, and the box doesn't resize on flip.
             VideoSurface(
-                Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp).width(100.dp).aspectRatio(ui.previewAspect)
-                    .clip(RoundedCornerShape(16.dp)).graphicsLayer { scaleX = if (ui.front) -1f else 1f },
+                Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp)
+                    .width(if (landscape) 150.dp else 100.dp).aspectRatio(if (landscape) 4f / 3f else 3f / 4f)
+                    .clip(RoundedCornerShape(16.dp)),
+                contentAspect = previewAspect, fit = VideoFit.Fill, mirror = ui.front,
                 onSurface = { CallManager.setPreviewSurface(call.id, it) }
             )
         }
-        Row(
-            Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically
+        if (!inPip) Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))))
+                .navigationBarsPadding().padding(start = 12.dp, end = 12.dp, top = 48.dp, bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            VideoBtn(if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, "Mute", muted) { CallManager.setMuted(!muted) }
-            if (call.sendingVideo) {
-                VideoBtn(if (ui.camOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, "Camera", !ui.camOn) { CallManager.toggleCamera() }
-                VideoBtn(Icons.Rounded.Cameraswitch, "Flip camera") { CallManager.flipCamera() }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Top) {
+                VideoBtn(if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (muted) "Unmute" else "Mute", muted, Modifier.weight(1f)) { CallManager.setMuted(!muted) }
+                if (call.sendingVideo) {
+                    VideoBtn(if (ui.camOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, if (ui.camOn) "Stop video" else "Start video", !ui.camOn, Modifier.weight(1f)) { CallManager.toggleCamera() }
+                    // Always present (dimmed when the camera is off or mid-swap) so the row never shifts around.
+                    VideoBtn(Icons.Rounded.Cameraswitch, if (ui.switching) "Switching…" else if (ui.front) "Rear camera" else "Front camera", false, Modifier.weight(1f), enabled = ui.camOn && !ui.switching) { CallManager.flipCamera() }
+                }
+                VideoBtn(Icons.Rounded.VolumeUp, if (speaker) "Speaker on" else "Speaker off", speaker, Modifier.weight(1f)) {
+                    CallManager.setRoute(if (speaker) CallAudioState.ROUTE_EARPIECE else CallAudioState.ROUTE_SPEAKER)
+                }
+                VideoBtn(Icons.Rounded.PhoneInTalk, "Voice only", false, Modifier.weight(1f)) { CallManager.requestVideo(call.id, false) }
             }
-            VideoBtn(Icons.Rounded.VolumeUp, "Speaker", speaker) {
-                CallManager.setRoute(if (speaker) CallAudioState.ROUTE_EARPIECE else CallAudioState.ROUTE_SPEAKER)
+            Spacer(Modifier.height(12.dp))
+            Row(
+                Modifier.fillMaxWidth(0.7f).heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(c.decline)
+                    .clickable(role = Role.Button, onClickLabel = "End call") { CallManager.disconnect(call.id) },
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Rounded.CallEnd, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("End call", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
-            VideoBtn(Icons.Rounded.PhoneInTalk, "Back to voice call") { CallManager.requestVideo(call.id, false) }
-            RoundButton(Icons.Rounded.CallEnd, "End call", c.decline, Color.White, 54.dp) { CallManager.disconnect(call.id) }
         }
     }
 }

@@ -11,12 +11,11 @@ import android.provider.Settings
 import android.telecom.TelecomManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -287,12 +286,12 @@ private fun MainShell(vm: DialerViewModel, actions: Actions) {
                     else -> SettingsScreen(vm, actions)
                 }
             }
-            AnimatedVisibility(
+            androidx.compose.animation.AnimatedVisibility(
                 visible = pager.targetPage != TAB_SETTINGS && !overlayOpen,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 20.dp),
                 enter = fadeIn() + scaleIn(initialScale = 0.8f), exit = fadeOut() + scaleOut(targetScale = 0.8f)
             ) { DialerFab { vm.dialerOpen.value = true } }
-            // Overlays (each handles its own back press)
+
             detailLog?.let { CallDetailScreen(vm, actions, it, index.find(it.number)) }
             historyLog?.let { CallHistoryScreen(vm, it, index.find(it.number)) }
             detailContact?.let { ContactDetailScreen(vm, actions, it) }

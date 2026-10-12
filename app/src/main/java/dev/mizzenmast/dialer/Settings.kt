@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.RadioButtonChecked
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SimCard
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Vibration
 import androidx.compose.material.icons.rounded.Warning
@@ -94,6 +95,7 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
     val direct by Prefs.directLaunch.collectAsState()
     val diag by Prefs.diagnostics.collectAsState()
     val silence by Prefs.silenceUnknown.collectAsState()
+    val showFavorites by Prefs.showFavorites.collectAsState()
 
     var troubleOpen by rememberSaveable { mutableStateOf(false) }
     var themeDialog by remember { mutableStateOf(false) }
@@ -135,6 +137,9 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
 
         SettingsSection("Appearance & interaction", "Make it feel like home") {
             NavRow(Icons.Rounded.Palette, "Theme", "System, light or dark", value = ThemeNames[theme.coerceIn(0, 2)]) { themeDialog = true }
+            ToggleRow(Icons.Rounded.Star, "Favorites in Recents", "Show starred contacts at the top of Recents", showFavorites) {
+                Prefs.set("show_favorites_row", Prefs.showFavorites, it)
+            }
             ToggleRow(Icons.Rounded.Vibration, "Haptic feedback", null, haptics) { Prefs.set("haptics", Prefs.haptics, it) }
             ToggleRow(Icons.Rounded.MusicNote, "Keypad tones", null, tones) { Prefs.set("keypad_tones", Prefs.keypadTones, it) }
             ToggleRow(Icons.Rounded.TouchApp, "Incoming-call swipe hints", null, hints) { Prefs.set("gesture_hints", Prefs.gestureHints, it) }

@@ -67,6 +67,7 @@
         <activity
             android:name=".InCallActivity"
             android:exported="false"
+            android:supportsPictureInPicture="true"
             android:launchMode="singleTask"
             android:taskAffinity="${applicationId}.incall"
             android:excludeFromRecents="true"
