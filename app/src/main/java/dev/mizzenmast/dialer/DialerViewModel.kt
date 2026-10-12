@@ -19,6 +19,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Smart filters at the top of Contacts. The SIM filters use the call log: people you've called or been called by on that SIM. */
+enum class ContactFilter { All, Sim1, Sim2, Favorites }
+
 /** One ViewModel for the main app UI. In-call state lives in CallManager (process-wide, owned by the InCallService). */
 class DialerViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx get() = getApplication<Application>()
@@ -36,6 +39,15 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
     val historyLog = MutableStateFlow<LogEntry?>(null)
     val detailContact = MutableStateFlow<Contact?>(null)
     val tick = MutableStateFlow(0)
+    val contactFilter = MutableStateFlow(ContactFilter.All)
+
+    /** Bottom-tab navigation. Switching tabs always closes the detail screens that sit on top of them. */
+    fun selectTab(i: Int) {
+        detailLog.value = null
+        historyLog.value = null
+        detailContact.value = null
+        tab.value = i
+    }
 
     private val _contacts = MutableStateFlow<Load<List<Contact>>>(Load.Loading)
 //    val contacts: StateFlow<Load<List<Contact>>> = _contacts
@@ -53,7 +65,13 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
         l.mapReady { buildRecents(ctx, it, f == 1, idx) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, Load.Loading)
 
-    val filtered: StateFlow<Load<List<Contact>>> = combine(_contacts, query) { l, q -> filterContacts(l, q) }
+    /** Per SIM slot (1, 2): normalised numbers that appear in the call log on that SIM. Empty when slots are unknown (single SIM, API < 30). */
+    val simNumbers: StateFlow<Map<Int, Set<String>>> = _log
+        .map { l -> simNumbersOf((l as? Load.Ready)?.data.orEmpty()) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    val filtered: StateFlow<Load<List<Contact>>> = combine(_contacts, query, contactFilter, simNumbers) { l, q, f, sims -> filterContacts(l, q, f, sims) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, Load.Loading)
 
@@ -74,14 +92,33 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
         else emptyList()
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private fun filterContacts(l: Load<List<Contact>>, q: String): Load<List<Contact>> {
+    private fun simNumbersOf(log: List<LogEntry>): Map<Int, Set<String>> {
+        val out = HashMap<Int, MutableSet<String>>()
+        for (e in log) {
+            val slot = e.simSlot ?: continue
+            val k = ContactIndex.key(e.number)
+            if (k.isNotEmpty()) out.getOrPut(slot) { HashSet() }.add(k)
+        }
+        return out
+    }
+
+    private fun filterContacts(l: Load<List<Contact>>, q: String, filter: ContactFilter, sims: Map<Int, Set<String>>): Load<List<Contact>> {
         if (l !is Load.Ready) return l
+        // SIM chips are hidden when no slot is known, so a stale SIM selection behaves like "All".
+        val f = if ((filter == ContactFilter.Sim1 || filter == ContactFilter.Sim2) && sims.isEmpty()) ContactFilter.All else filter
         val s = q.trim()
-        if (s.isEmpty()) return l
+        if (s.isEmpty() && f == ContactFilter.All) return l
         val digits = s.filter { it.isDigit() }
+        val simKeys: Set<String>? = when (f) {
+            ContactFilter.Sim1 -> sims[1].orEmpty()
+            ContactFilter.Sim2 -> sims[2].orEmpty()
+            else -> null
+        }
         return Load.Ready(l.data.filter { c ->
-            c.name.contains(s, ignoreCase = true) ||
-                    (digits.length >= 2 && c.phones.any { it.number.filter(Char::isDigit).contains(digits) })
+            (f != ContactFilter.Favorites || c.starred) &&
+                    (simKeys == null || c.phones.any { ContactIndex.key(it.number) in simKeys }) &&
+                    (s.isEmpty() || c.name.contains(s, ignoreCase = true) ||
+                            (digits.length >= 2 && c.phones.any { it.number.filter(Char::isDigit).contains(digits) }))
         })
     }
 

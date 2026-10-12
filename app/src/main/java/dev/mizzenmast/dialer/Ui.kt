@@ -15,6 +15,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -318,10 +319,13 @@ fun StateMessage(icon: ImageVector, title: String, body: String? = null, action:
 }
 
 @Composable
-fun ScreenTitle(text: String, trailing: (@Composable () -> Unit)? = null) {
+fun ScreenTitle(text: String, subtitle: String? = null, trailing: (@Composable () -> Unit)? = null) {
     val c = LocalColors.current
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 20.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, style = T.title, color = c.ink, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text(text, style = T.title, color = c.ink)
+            if (subtitle != null) Text(subtitle, color = c.inkDim, fontSize = 15.sp, modifier = Modifier.padding(top = 2.dp))
+        }
         trailing?.invoke()
     }
 }
@@ -332,16 +336,21 @@ fun SectionLabel(text: String) {
     Text(text, style = T.label, color = c.inkDim, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 8.dp))
 }
 
+/**
+ * Switch. Pass [onChange] for a standalone switch; pass null when the surrounding row is the toggleable
+ * (one touch target and one accessibility node for the whole row).
+ */
 @Composable
-fun Toggle(checked: Boolean, onChange: (Boolean) -> Unit) {
+fun Toggle(checked: Boolean, onChange: ((Boolean) -> Unit)?) {
     val c = LocalColors.current
     val x by animateDpAsState(if (checked) 22.dp else 2.dp, label = "toggle")
+    val onTrack = if (c.bg.luminance() < 0.5f) lerp(c.bg, c.accent, 0.65f) else c.accent // softer on dark, like the settings mockup
+    val track by animateColorAsState(if (checked) onTrack else c.surfaceHigh, label = "toggleTrack")
     Box(
-        Modifier.size(48.dp, 28.dp).clip(RoundedCornerShape(14.dp))
-            .background(if (checked) c.accent else c.surfaceHigh)
-            .toggleable(checked, role = Role.Switch, onValueChange = onChange)
+        Modifier.size(48.dp, 28.dp).clip(RoundedCornerShape(14.dp)).background(track)
+            .then(if (onChange != null) Modifier.toggleable(checked, role = Role.Switch, onValueChange = onChange) else Modifier)
     ) {
-        Box(Modifier.offset(x, 2.dp).size(24.dp).clip(CircleShape).background(if (checked) c.onAccent else c.inkDim))
+        Box(Modifier.offset(x, 2.dp).size(24.dp).clip(CircleShape).background(if (checked) Color.White else c.inkDim))
     }
 }
 

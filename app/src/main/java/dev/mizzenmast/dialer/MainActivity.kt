@@ -15,15 +15,25 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -103,7 +113,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(i: Intent?) {
         i ?: return
-        if (i.hasExtra(EXTRA_TAB)) vm.tab.value = i.getIntExtra(EXTRA_TAB, 0).coerceIn(0, 2)
+        if (i.hasExtra(EXTRA_TAB)) vm.selectTab(i.getIntExtra(EXTRA_TAB, 0).coerceIn(0, 2))
         if (i.getBooleanExtra(EXTRA_OPEN_DIALER, false)) vm.dialerOpen.value = true
         val data = i.data
         if ((i.action == Intent.ACTION_DIAL || i.action == Intent.ACTION_VIEW) && data?.scheme == "tel") {
@@ -232,6 +242,20 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun App(vm: DialerViewModel, actions: Actions) {
+    val onboarded by Prefs.onboarded.collectAsState()
+    if (onboarded) MainShell(vm, actions)
+    else OnboardingScreen(vm, actions) { Prefs.set("onboarded", Prefs.onboarded, true) }
+}
+
+private const val TAB_COUNT = 3
+private const val TAB_SETTINGS = 2
+
+/**
+ * The three bottom tabs live in a horizontal pager (swipe or tap). Detail screens (call info, history, contact) are overlays
+ * above the pager; any tab change closes them, so the bottom bar always works.
+ */
+@Composable
+private fun MainShell(vm: DialerViewModel, actions: Actions) {
     val c = LocalColors.current
     val tab by vm.tab.collectAsState()
     val detailLog by vm.detailLog.collectAsState()
@@ -239,29 +263,41 @@ fun App(vm: DialerViewModel, actions: Actions) {
     val detailContact by vm.detailContact.collectAsState()
     val index by vm.index.collectAsState()
     val dialerOpen by vm.dialerOpen.collectAsState()
-    val onboarded by Prefs.onboarded.collectAsState()
+    val overlayOpen = detailLog != null || historyLog != null || detailContact != null
 
-    if (!onboarded) {
-        OnboardingScreen(vm, actions) { Prefs.set("onboarded", Prefs.onboarded, true) }
-        return
+    val pager = rememberPagerState(initialPage = tab.coerceIn(0, TAB_COUNT - 1)) { TAB_COUNT }
+    val motion = rememberMotionEnabled()
+    // vm.tab -> pager (bottom-bar taps, intents). settledPage -> vm.tab (swipes). Both sides are no-ops once they agree.
+    LaunchedEffect(tab) {
+        if (pager.settledPage != tab) { if (motion) pager.animateScrollToPage(tab) else pager.scrollToPage(tab) }
     }
+    LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.collect { vm.tab.value = it } }
+    // Back from Contacts / Settings returns to Recents first. Overlays register their own handlers later, so they win.
+    BackHandler(enabled = !overlayOpen && pager.currentPage != 0) { vm.selectTab(0) }
 
     Column(Modifier.fillMaxSize().background(c.bg)) {
         Box(Modifier.weight(1f).statusBarsPadding()) {
-            when (tab) {
-                0 -> RecentsScreen(vm, actions)
-                1 -> ContactsScreen(vm, actions)
-                else -> SettingsScreen(vm, actions)
+            HorizontalPager(
+                state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = TAB_COUNT - 1,
+                userScrollEnabled = !overlayOpen, key = { it }
+            ) { page ->
+                when (page) {
+                    0 -> RecentsScreen(vm, actions)
+                    1 -> ContactsScreen(vm, actions)
+                    else -> SettingsScreen(vm, actions)
+                }
             }
-            if (tab != 2 && detailLog == null && historyLog == null && detailContact == null) {
-                DialerFab(Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 20.dp)) { vm.dialerOpen.value = true }
-            }
+            AnimatedVisibility(
+                visible = pager.targetPage != TAB_SETTINGS && !overlayOpen,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 20.dp),
+                enter = fadeIn() + scaleIn(initialScale = 0.8f), exit = fadeOut() + scaleOut(targetScale = 0.8f)
+            ) { DialerFab { vm.dialerOpen.value = true } }
             // Overlays (each handles its own back press)
             detailLog?.let { CallDetailScreen(vm, actions, it, index.find(it.number)) }
             historyLog?.let { CallHistoryScreen(vm, it, index.find(it.number)) }
             detailContact?.let { ContactDetailScreen(vm, actions, it) }
         }
-        BottomBar(tab) { vm.tab.value = it }
+        BottomBar(pager.targetPage) { vm.selectTab(it) }
     }
     if (dialerOpen) DialerSheet(vm, actions) { vm.dialerOpen.value = false }
     SimPickerSheet(vm, actions)

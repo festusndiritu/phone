@@ -3,14 +3,11 @@
 
 package dev.mizzenmast.dialer
 
-import android.Manifest
-import android.app.NotificationManager
 import android.app.role.RoleManager
 import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
-import android.os.PowerManager
 import android.provider.CallLog
 import android.provider.Settings
 import android.text.format.DateUtils
@@ -21,14 +18,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,7 +34,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -63,14 +57,9 @@ import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
-import androidx.compose.material.icons.rounded.ExpandLess
-import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -100,7 +89,6 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -672,98 +660,6 @@ fun CallHistoryScreen(vm: DialerViewModel, e: LogEntry, contact: Contact?) {
 
 // ---------- contacts ----------
 
-private fun letterOf(name: String): Char {
-    val ch = name.trim().firstOrNull() ?: return '#'
-    val base = java.text.Normalizer.normalize(ch.toString(), java.text.Normalizer.Form.NFD).firstOrNull() ?: return '#'
-    return if (base.isLetter()) base.uppercaseChar() else '#'
-}
-
-@Composable
-private fun AlphaRail(letters: List<Char>, modifier: Modifier = Modifier, onPick: (Char) -> Unit) {
-    val c = LocalColors.current
-    var h by remember { mutableIntStateOf(1) }
-    fun pick(y: Float) { if (letters.isNotEmpty()) onPick(letters[((y / h) * letters.size).toInt().coerceIn(0, letters.size - 1)]) }
-    Column(
-        modifier.fillMaxHeight().padding(vertical = 12.dp).width(28.dp).onSizeChanged { h = it.height.coerceAtLeast(1) }
-            .pointerInput(letters) { detectTapGestures { o -> pick(o.y) } }
-            .pointerInput(letters) { detectVerticalDragGestures { change, _ -> pick(change.position.y) } },
-        verticalArrangement = Arrangement.SpaceEvenly, horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        letters.forEach { Text(it.toString(), color = c.accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
-    val c = LocalColors.current
-    val list by vm.filtered.collectAsState()
-    val q by vm.query.collectAsState()
-    Column(Modifier.fillMaxSize()) {
-        ScreenTitle("Contacts")
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp).clip(RoundedCornerShape(14.dp)).background(c.surface).padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Rounded.Search, null, tint = c.inkDim, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(10.dp))
-            BasicTextField(
-                value = q, onValueChange = { vm.query.value = it }, singleLine = true,
-                textStyle = TextStyle(color = c.ink, fontSize = 16.sp), cursorBrush = SolidColor(c.accent),
-                modifier = Modifier.weight(1f),
-                decorationBox = { inner -> Box { if (q.isEmpty()) Text("Search contacts", color = c.inkDim, fontSize = 16.sp); inner() } }
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        when (val s = list) {
-            Load.Loading -> ListSkeleton()
-            Load.Denied -> StateMessage(Icons.Rounded.Contacts, "See your contacts", null, "Allow access", actions.requestContacts)
-            is Load.Failed -> StateMessage(Icons.Rounded.Contacts, "Couldn't load contacts", s.msg, "Try again", actions.requestContacts)
-            is Load.Ready -> if (s.data.isEmpty()) {
-                StateMessage(Icons.Rounded.Contacts, if (q.isBlank()) "No contacts" else "No matches")
-            } else {
-                val sections = remember(s.data) {
-                    val m = s.data.groupBy { letterOf(it.name) }
-                    val keys = m.keys.filter { it != '#' } + (if (m.containsKey('#')) listOf('#') else emptyList())
-                    keys.map { it to m.getValue(it) }
-                }
-                val positions = remember(sections) {
-                    val map = HashMap<Char, Int>(); var run = 0
-                    sections.forEach { (l, people) -> map[l] = run; run += 1 + people.size }
-                    map
-                }
-                val state = rememberLazyListState()
-                val scope = rememberCoroutineScope()
-                Box(Modifier.fillMaxSize()) {
-                    LazyColumn(Modifier.fillMaxSize(), state = state) {
-                        sections.forEach { (letter, people) ->
-                            stickyHeader(key = "h$letter") {
-                                Text(letter.toString(), color = c.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.fillMaxWidth().background(c.bg).padding(horizontal = 20.dp, vertical = 6.dp))
-                            }
-                            items(people, key = { it.id }) { ct ->
-                                Row(Modifier.fillMaxWidth().clickable { vm.detailContact.value = ct }.padding(start = 20.dp, end = 38.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Avatar(ct.name, ct.photo, 44.dp)
-                                    Spacer(Modifier.width(14.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(ct.name, color = c.ink, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text((pretty(ct.phones.first().number) ?: ct.phones.first().number) + (if (ct.phones.size > 1) "  +${ct.phones.size - 1}" else ""), color = c.inkDim, fontSize = 13.sp, maxLines = 1)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (q.isBlank() && sections.size > 1) {
-                        AlphaRail(sections.map { it.first }, Modifier.align(Alignment.CenterEnd)) { l ->
-                            positions[l]?.let { p -> scope.launch { state.scrollToItem(p) } }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 @Composable
 fun ContactDetailScreen(vm: DialerViewModel, actions: Actions, ct: Contact) {
     val c = LocalColors.current
@@ -944,141 +840,3 @@ fun StatusRow(title: String, sub: String?, ok: Boolean, action: String?, onActio
         if (!ok && action != null) TextPill(action, onAction)
     }
 }
-
-@Composable
-private fun ToggleRow(title: String, sub: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
-    val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            if (sub != null) Text(sub, color = c.inkDim, fontSize = 13.sp)
-        }
-        Spacer(Modifier.width(12.dp))
-        Toggle(checked, onChange)
-    }
-}
-
-@Composable
-private fun LinkRow(title: String, sub: String?, onClick: () -> Unit) {
-    val c = LocalColors.current
-    Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 12.dp)) {
-        Text(title, color = c.accent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        if (sub != null) Text(sub, color = c.inkDim, fontSize = 13.sp)
-    }
-}
-
-@Composable
-fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
-    val c = LocalColors.current
-    val ctx = LocalContext.current
-    val tick by vm.tick.collectAsState()
-    val theme by Prefs.theme.collectAsState()
-    val haptics by Prefs.haptics.collectAsState()
-    val tones by Prefs.keypadTones.collectAsState()
-    val hints by Prefs.gestureHints.collectAsState()
-    val direct by Prefs.directLaunch.collectAsState()
-    val diag by Prefs.diagnostics.collectAsState()
-    val silence by Prefs.silenceUnknown.collectAsState()
-
-    var setupOpen by rememberSaveable { mutableStateOf(false) }
-    var troubleOpen by rememberSaveable { mutableStateOf(false) }
-    val isDefault = remember(tick) { roleHeld(ctx) }
-    val contacts = remember(tick) { ctx.granted(Manifest.permission.READ_CONTACTS) }
-    val callLog = remember(tick) { ctx.granted(Manifest.permission.READ_CALL_LOG) && ctx.granted(Manifest.permission.WRITE_CALL_LOG) }
-    val phone = remember(tick) { ctx.granted(Manifest.permission.CALL_PHONE) }
-    val notif = remember(tick) { Build.VERSION.SDK_INT < 33 || ctx.granted(Manifest.permission.POST_NOTIFICATIONS) }
-    val fsi = remember(tick) { Build.VERSION.SDK_INT < 34 || ctx.getSystemService(NotificationManager::class.java).canUseFullScreenIntent() }
-    val overlay = remember(tick) { Settings.canDrawOverlays(ctx) }
-    val battery = remember(tick) { ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName) }
-
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenTitle("Settings")
-
-        val setupOk = isDefault && contacts && callLog && phone && notif && fsi
-        if (setupOk) {
-            ExpandRow(Icons.Rounded.CheckCircle, c.answer, "Setup complete", null, setupOpen) { setupOpen = !setupOpen }
-        }
-        if (!setupOk || setupOpen) {
-            // A row only explains itself while it still needs action.
-            SectionLabel("SETUP")
-            StatusRow("Default phone app", if (isDefault) null else "Required for calls", isDefault, "Set", actions.requestRole)
-            StatusRow("Contacts", if (contacts) null else "Names and photos", contacts, "Allow", actions.requestContacts)
-            StatusRow("Call history", if (callLog) null else "Recent calls", callLog, "Allow", actions.requestCallLog)
-            StatusRow("Phone", if (phone) null else "Place calls", phone, "Allow", actions.requestPhone)
-            StatusRow("Notifications", if (notif) null else "Call alerts", notif, "Allow", actions.requestNotifications)
-            if (Build.VERSION.SDK_INT >= 34) StatusRow("Full-screen alerts", if (fsi) null else "Show calls over the lock screen", fsi, "Open") { actions.open(SettingsTarget.FullScreen) }
-            StatusRow("Display over other apps", if (overlay) null else "Optional", overlay, "Open") { actions.open(SettingsTarget.Overlay) }
-        }
-
-        SectionLabel("CALLS")
-        NavRow(Icons.Rounded.MusicNote, "Ringtone & vibration", null) { actions.open(SettingsTarget.Sound) }
-        NavRow(Icons.Rounded.SimCard, "Calling accounts", "Default SIM") { actions.open(SettingsTarget.CallingAccounts) }
-        NavRow(Icons.Rounded.Block, "Blocked numbers", null) { actions.open(SettingsTarget.Blocked) }
-        ToggleRow("Silence unknown callers", "Only saved contacts ring; others appear as missed calls", silence) { on ->
-            Prefs.set("silence_unknown", Prefs.silenceUnknown, on)
-            // The screening service stays disabled while this is off, so Telecom never binds it.
-            ctx.packageManager.setComponentEnabledSetting(
-                android.content.ComponentName(ctx, UnknownCallerScreeningService::class.java),
-                if (on) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                android.content.pm.PackageManager.DONT_KILL_APP
-            )
-        }
-        ToggleRow("Open call screen on ring", "Opens by itself while the phone is awake and unlocked", direct) { Prefs.set("direct_launch", Prefs.directLaunch, it) }
-        NavRow(Icons.Rounded.Notifications, "Call notifications", null) { actions.open(SettingsTarget.Notifications) }
-
-        SectionLabel("KEEP CALLS RELIABLE")
-        StatusRow("Unrestricted battery", if (battery) null else "Lets calls show on screen when power saving is on", battery, "Allow") { actions.open(SettingsTarget.Battery) }
-        LinkRow("Power saving & background", "If calls ring but the screen never opens, allow auto-start here and add this app to the phone's power saving allowed list") { actions.open(SettingsTarget.AppDetails) }
-
-        SectionLabel("PREFERENCES")
-        Row(Modifier.padding(horizontal = 20.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("System", "Light", "Dark").forEachIndexed { i, l -> TextPill(l, { Prefs.setTheme(i) }, filled = theme == i) }
-        }
-        ToggleRow("Haptic feedback", null, haptics) { Prefs.set("haptics", Prefs.haptics, it) }
-        ToggleRow("Keypad tones", null, tones) { Prefs.set("keypad_tones", Prefs.keypadTones, it) }
-        ToggleRow("Swipe hint on incoming calls", null, hints) { Prefs.set("gesture_hints", Prefs.gestureHints, it) }
-
-        Spacer(Modifier.height(8.dp))
-        ExpandRow(Icons.Rounded.Build, c.inkDim, "Troubleshooting", null, troubleOpen) { troubleOpen = !troubleOpen }
-        if (troubleOpen) {
-            LinkRow("Setup guide", "Walk through the permissions again") { Prefs.set("onboarded", Prefs.onboarded, false) }
-            ToggleRow("Keep a log", "Crashes and call events. No numbers or names recorded", diag) { Prefs.set("diagnostics", Prefs.diagnostics, it) }
-            LinkRow("Share log", "Send the log to whoever is debugging") { actions.share(Diag.report(Diag.events.value)) }
-            LinkRow("Clear log", null) { Diag.clear() }
-        }
-        Text("Version ${Diag.version}", color = c.inkDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
-        Spacer(Modifier.height(16.dp))
-    }
-}
-
-@Composable
-private fun ExpandRow(icon: ImageVector, tint: Color, title: String, sub: String?, open: Boolean, onClick: () -> Unit) {
-    val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            if (sub != null) Text(sub, color = c.inkDim, fontSize = 13.sp)
-        }
-        Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (open) "Collapse" else "Expand", tint = c.inkDim)
-    }
-}
-
-@Composable
-private fun NavRow(icon: ImageVector, title: String, sub: String?, onClick: () -> Unit) {
-    val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(40.dp).clip(CircleShape).background(c.surface), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = c.accent, modifier = Modifier.size(22.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            if (sub != null) Text(sub, color = c.inkDim, fontSize = 13.sp)
-        }
-        Icon(Icons.Rounded.ChevronRight, null, tint = c.inkDim)
-    }
-}
-
-//private fun Modifier = this
