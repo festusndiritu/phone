@@ -94,6 +94,17 @@ private fun stateOf(c: Call): Int = if (Build.VERSION.SDK_INT >= 31) c.details.s
 
 private fun Call.has(cap: Int) = (details.callCapabilities and cap) != 0
 
+/**
+ * "This call can be switched to video". Call.Details.CAPABILITY_CAN_UPGRADE_TO_VIDEO is hidden from the public SDK, so use its bit
+ * (0x00080000, same as Connection's), or the public "both sides can send and receive video" bits.
+ */
+private fun Call.canUpgradeToVideo(): Boolean {
+    val caps = details.callCapabilities
+    val both = Call.Details.CAPABILITY_SUPPORTS_VT_LOCAL_BIDIRECTIONAL
+    val remote = Call.Details.CAPABILITY_SUPPORTS_VT_REMOTE_BIDIRECTIONAL
+    return (caps and 0x00080000) != 0 || ((caps and both) == both && (caps and remote) == remote)
+}
+
 private fun numberOf(c: Call): String? =
     c.details.handle?.schemeSpecificPart?.let { Uri.decode(it) }?.takeIf { it.isNotBlank() }
 
@@ -214,7 +225,7 @@ object CallManager {
     private class Cb(val id: Int) : Call.Callback() {
         override fun onStateChanged(call: Call, state: Int) {
             Diag.log("state_${stateName(state)}", id)
-            if (state == Call.STATE_ACTIVE) Diag.log("video_caps", id, "canUpgrade=${call.has(Call.Details.CAPABILITY_CAN_UPGRADE_TO_VIDEO)} videoState=${call.details.videoState} hasVideoCall=${call.videoCall != null}")
+            if (state == Call.STATE_ACTIVE) Diag.log("video_caps", id, "canUpgrade=${call.canUpgradeToVideo()} caps=${call.details.callCapabilities} videoState=${call.details.videoState} hasVideoCall=${call.videoCall != null}")
             syncVideo(id, call)
             publish()
         }
@@ -256,7 +267,7 @@ object CallManager {
             sims = if (st == Call.STATE_SELECT_PHONE_ACCOUNT) simOptions(call) else emptyList(),
             sim = simLabels[id],
             videoState = d.videoState,
-            canVideo = call.has(Call.Details.CAPABILITY_CAN_UPGRADE_TO_VIDEO),
+            canVideo = call.canUpgradeToVideo(),
             videoRequest = upgradeAsk[id] ?: 0
         )
     }
