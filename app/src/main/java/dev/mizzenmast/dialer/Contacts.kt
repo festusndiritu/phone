@@ -105,7 +105,10 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
 
     Column(Modifier.fillMaxSize()) {
         ScreenTitle("Contacts")
-        SearchField(q) { vm.query.value = it }
+        SearchField(
+            value = q,
+            onChange = { vm.query.value = it }
+        )
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -141,9 +144,9 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
 /** Quiet search field with a clear button that appears as soon as there's text, and Search on the keyboard to dismiss it. */
 @Composable
 fun SearchField(
+    modifier: Modifier = Modifier.padding(horizontal = 20.dp),
     value: String, onChange: (String) -> Unit,
     placeholder: String = "Search contacts", autoFocus: Boolean = false,
-    modifier: Modifier = Modifier.padding(horizontal = 20.dp)
 ) {
     val c = LocalColors.current
     val focus = remember { FocusRequester() }
