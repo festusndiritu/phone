@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -55,6 +56,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.Edit
@@ -303,6 +305,42 @@ fun TextPill(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, d
     }
 }
 
+/** Plain 48dp icon button (toolbar action). The description doubles as the accessibility label. */
+@Composable
+fun IconAction(icon: ImageVector, desc: String, onClick: () -> Unit, modifier: Modifier = Modifier, tint: Color = LocalColors.current.ink) {
+    Box(
+        modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = desc, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Icon(icon, desc, tint = tint, modifier = Modifier.size(24.dp)) }
+}
+
+/**
+ * Contextual top bar shown while selecting: close on the left, the count, then [actions] on the right.
+ * Same height as [ScreenTitle] so the list doesn't jump when selection starts.
+ */
+@Composable
+fun ContextBar(count: Int, onClose: () -> Unit, actions: @Composable RowScope.() -> Unit) {
+    val c = LocalColors.current
+    Row(
+        Modifier.fillMaxWidth().background(c.surface).padding(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconAction(Icons.Rounded.Close, "Cancel selection", onClose)
+        Text("$count selected", color = c.ink, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
+        actions()
+    }
+}
+
+/** Flat dialog action (no pill, no fill), the way system dialogs do it. */
+@Composable
+fun DialogButton(text: String, onClick: () -> Unit, danger: Boolean = false) {
+    val c = LocalColors.current
+    Box(
+        Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center
+    ) { Text(text, color = if (danger) c.decline else c.accent, fontSize = 15.sp, fontWeight = FontWeight.Medium) }
+}
+
 @Composable
 fun StateMessage(icon: ImageVector, title: String, body: String? = null, action: String? = null, onAction: (() -> Unit)? = null) {
     val c = LocalColors.current
@@ -401,9 +439,8 @@ fun ConfirmDialog(title: String, body: String?, confirm: String, onConfirm: () -
             }
             Spacer(Modifier.height(20.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextPill("Cancel", onDismiss)
-                Spacer(Modifier.width(8.dp))
-                TextPill(confirm, onConfirm, danger = true)
+                DialogButton("Cancel", onDismiss)
+                DialogButton(confirm, onConfirm, danger = true)
             }
         }
     }

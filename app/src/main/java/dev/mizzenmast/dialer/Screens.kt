@@ -54,6 +54,12 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Contacts
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
@@ -61,6 +67,8 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Sms
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -290,28 +298,60 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
     val selected = remember { mutableStateListOf<Long>() }
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var menu by remember { mutableStateOf(false) }
     fun exitSelection() { selecting = false; selected.clear() }
-    fun toggle(id: Long) { if (id in selected) selected.remove(id) else selected.add(id) }
+    fun closeSearch() { searching = false; query = "" }
+    // Un-selecting the last row ends selection, like every system list does.
+    fun toggle(id: Long) { if (id in selected) selected.remove(id) else selected.add(id); if (selected.isEmpty()) exitSelection() }
+    BackHandler(enabled = searching) { closeSearch() }
     BackHandler(enabled = selecting) { exitSelection() }
 
     val model = (recents as? Load.Ready)?.data
-    val groups = remember(model) { model?.items?.filterIsInstance<RItem.Group>().orEmpty() }
+    val shown = remember(model, query, searching) {
+        if (model == null) emptyList() else if (searching) model.items.matching(query) else model.items
+    }
+    val groups = remember(shown) { shown.filterIsInstance<RItem.Group>() }
+    fun selectAll() { selected.clear(); selected.addAll(groups.map { it.first.id }) }
 
     Column(Modifier.fillMaxSize()) {
-        ScreenTitle(if (selecting) "${selected.size} selected" else "Recents", trailing = {
-            if (selecting) {
-                val allOn = groups.isNotEmpty() && selected.size == groups.size
-                TextPill(if (allOn) "None" else "All", {
-                    selected.clear()
-                    if (!allOn) selected.addAll(groups.map { it.first.id })
-                })
-                TextPill("Cancel", { exitSelection() })
-            } else if (model?.logEmpty == false) {
-                TextPill("Select", { selecting = true })
-                TextPill("Clear", { confirmClear = true }, danger = true)
+        when {
+            selecting -> {
+                val one = groups.firstOrNull { it.first.id == selected.singleOrNull() }
+                ContextBar(selected.size, onClose = { exitSelection() }) {
+                    // One row: everything you can do with it. Several rows: just delete.
+                    if (one != null) {
+                        if (one.first.number.isNotBlank()) IconAction(Icons.Rounded.ContentCopy, "Copy number", { copyNumber(ctx, one.first.number); exitSelection() })
+                        if (groups.size > 1) IconAction(Icons.Rounded.SelectAll, "Select all", { selectAll() })
+                    }
+                    IconAction(Icons.Rounded.Delete, "Delete", { confirmDelete = true })
+                }
             }
-        })
-        if (showFavorites && favorites.isNotEmpty() && !selecting) FavoritesRow(favorites, onCall = { actions.call(it.phones.first().number) }, onOpen = { vm.detailContact.value = it })
+            searching -> Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconAction(Icons.Rounded.ArrowBack, "Close search", { closeSearch() })
+                SearchField(query, { query = it; exitSelection() }, placeholder = "Search recents", autoFocus = true, modifier = Modifier.weight(1f))
+            }
+            else -> ScreenTitle("Recents", trailing = {
+                if (model?.logEmpty == false) {
+                    IconAction(Icons.Rounded.Search, "Search recents", { searching = true })
+                    Box {
+                        IconAction(Icons.Rounded.MoreVert, "More options", { menu = true })
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.background(c.surfaceHigh)) {
+                            DropdownMenuItem(
+                                text = { Text("Select all", color = c.ink) }, enabled = groups.isNotEmpty(),
+                                leadingIcon = { Icon(Icons.Rounded.SelectAll, null, tint = c.inkDim) },
+                                onClick = { menu = false; selecting = true; selectAll() })
+                            DropdownMenuItem(
+                                text = { Text("Clear call log", color = c.decline) },
+                                leadingIcon = { Icon(Icons.Rounded.DeleteSweep, null, tint = c.decline) },
+                                onClick = { menu = false; confirmClear = true })
+                        }
+                    }
+                }
+            })
+        }
+        if (showFavorites && favorites.isNotEmpty() && !selecting && !searching) FavoritesRow(favorites, onCall = { actions.call(it.phones.first().number) }, onOpen = { vm.detailContact.value = it })
         when (val s = recents) {
             Load.Loading -> ListSkeleton()
             Load.Denied -> StateMessage(Icons.Rounded.History, "See your recent calls",
@@ -321,14 +361,16 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                 StateMessage(Icons.Rounded.History, "No calls yet")
             } else {
                 Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip("All", filter == 0, { vm.logFilter.value = 0; selected.clear() })
-                    FilterChip("Missed", filter == 1, { vm.logFilter.value = 1; selected.clear() })
+                    FilterChip("All", filter == 0, { vm.logFilter.value = 0; exitSelection() })
+                    FilterChip("Missed", filter == 1, { vm.logFilter.value = 1; exitSelection() })
                 }
                 val m = s.data
-                if (m.items.isEmpty()) StateMessage(Icons.Rounded.CallMissed, "No missed calls")
-                else LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                if (shown.isEmpty()) {
+                    if (searching && query.isNotBlank()) StateMessage(Icons.Rounded.Search, "No matches")
+                    else StateMessage(Icons.Rounded.CallMissed, "No missed calls")
+                } else LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
                     items(
-                        m.items,
+                        shown,
                         key = { if (it is RItem.Header) it.key else "g${(it as RItem.Group).first.id}" },
                         contentType = { if (it is RItem.Header) 0 else 1 }
                     ) { item ->
@@ -347,16 +389,6 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                 }
             }
         }
-        if (selecting) {
-            val one = groups.firstOrNull { it.first.id == selected.singleOrNull() }
-            Row(Modifier.fillMaxWidth().background(c.surface).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (one != null && one.first.number.isNotBlank()) {
-                    TextPill("Copy number", { copyNumber(ctx, one.first.number); exitSelection() }, Modifier.weight(1f))
-                }
-                if (selected.isNotEmpty()) TextPill("Delete", { confirmDelete = true }, Modifier.weight(1f), danger = true)
-                else Spacer(Modifier.height(44.dp))
-            }
-        }
     }
 
     if (confirmDelete) {
@@ -373,6 +405,7 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
             confirmClear = false
             vm.clearLog { ok -> if (!ok) Toast.makeText(ctx, "Couldn't clear call log", Toast.LENGTH_SHORT).show() }
             exitSelection()
+            closeSearch()
         }, onDismiss = { confirmClear = false })
 }
 
@@ -656,35 +689,22 @@ fun CallHistoryScreen(vm: DialerViewModel, e: LogEntry, contact: Contact?) {
         out
     }
     fun exitSelection() { selecting = false; selected.clear() }
-    fun toggle(id: Long) { if (id in selected) selected.remove(id) else selected.add(id) }
+    fun toggle(id: Long) { if (id in selected) selected.remove(id) else selected.add(id); if (selected.isEmpty()) exitSelection() }
     BackHandler { if (selecting) exitSelection() else vm.historyLog.value = null }
 
     Column(Modifier.fillMaxSize().background(c.bg).pointerInput(Unit) { detectTapGestures { } }) {
-        Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button) { if (selecting) exitSelection() else vm.historyLog.value = null },
-                contentAlignment = Alignment.Center
-            ) { Icon(if (selecting) Icons.Rounded.Close else Icons.Rounded.ArrowBack, if (selecting) "Cancel selection" else "Back", tint = c.ink) }
+        if (selecting) ContextBar(selected.size, onClose = { exitSelection() }) {
+            if (selected.size == 1 && shown.size > 1) IconAction(Icons.Rounded.SelectAll, "Select all", { selected.clear(); selected.addAll(shown.map { it.id }) })
+            IconAction(Icons.Rounded.Delete, "Delete", { confirm = true })
+        } else Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconAction(Icons.Rounded.ArrowBack, "Back", { vm.historyLog.value = null })
             Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                Text(if (selecting) "${selected.size} selected" else "History", color = c.ink, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                if (!selecting) Text(e.title(contact), color = c.inkDim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (shown.isNotEmpty()) {
-                val allOn = selected.size == shown.size
-                Box(
-                    Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(24.dp)).clickable(role = Role.Button) {
-                        when {
-                            !selecting -> selecting = true
-                            allOn -> selected.clear()
-                            else -> { selected.clear(); selected.addAll(shown.map { it.id }) }
-                        }
-                    }.padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) { Text(if (!selecting) "Select" else if (allOn) "None" else "All", color = c.accent, fontSize = 15.sp, fontWeight = FontWeight.Medium) }
+                Text("History", color = c.ink, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(e.title(contact), color = c.inkDim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("All", "Outgoing", "Incoming", "Missed").forEachIndexed { i, l -> FilterChip(l, filter == i, { filter = i; selected.clear() }) }
+            listOf("All", "Outgoing", "Incoming", "Missed").forEachIndexed { i, l -> FilterChip(l, filter == i, { filter = i; exitSelection() }) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (shown.isEmpty()) StateMessage(Icons.Rounded.History, "No calls")
@@ -709,10 +729,6 @@ fun CallHistoryScreen(vm: DialerViewModel, e: LogEntry, contact: Contact?) {
                     }
                 }
             }
-        }
-        if (selecting) Box(Modifier.fillMaxWidth().background(c.surface).padding(16.dp), contentAlignment = Alignment.Center) {
-            if (selected.isNotEmpty()) TextPill("Delete ${selected.size}", { confirm = true }, Modifier.fillMaxWidth(), danger = true)
-            else Spacer(Modifier.height(44.dp))
         }
     }
     if (confirm) ConfirmDialog(if (selected.size == 1) "Delete this call?" else "Delete ${selected.size} calls?", null, "Delete",

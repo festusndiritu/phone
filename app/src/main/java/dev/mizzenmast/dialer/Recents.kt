@@ -30,6 +30,25 @@ fun <T, R> Load<T>.mapReady(f: (T) -> R): Load<R> = when (this) {
     is Load.Failed -> this
 }
 
+/** Rows matching [q] by name or number; a day header is kept only when something under it matches. */
+fun List<RItem>.matching(q: String): List<RItem> {
+    val s = q.trim()
+    if (s.isEmpty()) return this
+    val digits = s.filter { it.isDigit() }
+    val out = ArrayList<RItem>()
+    var pending: RItem.Header? = null
+    for (item in this) when (item) {
+        is RItem.Header -> pending = item
+        is RItem.Group -> if (item.title.contains(s, ignoreCase = true) ||
+            (digits.length >= 2 && item.first.number.filter { it.isDigit() }.contains(digits))) {
+            pending?.let { h -> out.add(h) }
+            pending = null
+            out.add(item)
+        }
+    }
+    return out
+}
+
 /** Day headers, with consecutive calls to the same number on the same day folded into one group. Pure: safe on any thread. */
 fun buildRecents(ctx: Context, list: List<LogEntry>, missedOnly: Boolean, index: ContactIndex): RecentsModel {
     val src = if (missedOnly) list.filter { it.type == CallLog.Calls.MISSED_TYPE } else list

@@ -140,13 +140,18 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
 
 /** Quiet search field with a clear button that appears as soon as there's text, and Search on the keyboard to dismiss it. */
 @Composable
-private fun SearchField(value: String, onChange: (String) -> Unit) {
+fun SearchField(
+    value: String, onChange: (String) -> Unit,
+    placeholder: String = "Search contacts", autoFocus: Boolean = false,
+    modifier: Modifier = Modifier.padding(horizontal = 20.dp)
+) {
     val c = LocalColors.current
     val focus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val motion = rememberMotionEnabled()
+    LaunchedEffect(Unit) { if (autoFocus) focus.requestFocus() }
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp).clip(RoundedCornerShape(14.dp)).background(c.surface).padding(start = 14.dp),
+        modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.surface).padding(start = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(Icons.Rounded.Search, null, tint = c.inkDim, modifier = Modifier.size(20.dp))
@@ -157,7 +162,7 @@ private fun SearchField(value: String, onChange: (String) -> Unit) {
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
             modifier = Modifier.weight(1f).padding(vertical = 14.dp).focusRequester(focus),
-            decorationBox = { inner -> Box { if (value.isEmpty()) Text("Search contacts", color = c.inkDim, fontSize = 16.sp); inner() } }
+            decorationBox = { inner -> Box { if (value.isEmpty()) Text(placeholder, color = c.inkDim, fontSize = 16.sp); inner() } }
         )
         // Fixed 48dp slot, so the field doesn't change width when the button appears.
         Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
