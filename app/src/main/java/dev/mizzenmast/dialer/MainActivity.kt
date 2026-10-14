@@ -105,6 +105,16 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        vm.setActive(true)
+    }
+
+    override fun onStop() {
+        vm.setActive(false)
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         vm.onPermissionsChanged() // also refreshes permission/role status rows

@@ -147,7 +147,9 @@ object CallManager {
     private val upgradeAsk = HashMap<Int, Int>()
     private val videoCbs = HashMap<Int, InCallService.VideoCall.Callback>()
     private val camBound = HashMap<Int, String>()
-    @Volatile private var uiVisible = false
+    private val _uiVisible = MutableStateFlow(false)
+    /** True while the call screen is on screen (picture-in-picture counts). Camera binding and the UI clocks follow it. */
+    val uiVisible: StateFlow<Boolean> = _uiVisible
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val videoReqAt = HashMap<Int, Long>()
 
@@ -395,7 +397,7 @@ object CallManager {
         if (call.videoCall == null) return
         hookVideo(id, call)
         val ctx = appCtx ?: return
-        val want = uiVisible && _video.value.camOn && !_video.value.switching && stateOf(call) == Call.STATE_ACTIVE &&
+        val want = _uiVisible.value && _video.value.camOn && !_video.value.switching && stateOf(call) == Call.STATE_ACTIVE &&
             VideoProfile.isTransmissionEnabled(call.details.videoState)
         if (want) {
             val cam = cameraId(ctx, _video.value.front) ?: return
@@ -409,7 +411,7 @@ object CallManager {
 
     private fun syncAllVideo() = refs.forEach { (id, c) -> syncVideo(id, c) }
 
-    fun setUiVisible(visible: Boolean) { uiVisible = visible; syncAllVideo() }
+    fun setUiVisible(visible: Boolean) { _uiVisible.value = visible; syncAllVideo() }
     fun toggleCamera() { _video.value = _video.value.copy(camOn = !_video.value.camOn); syncAllVideo() }
     /**
      * Flip = the same sequence that already works by hand (camera off, then on): release the camera, let the provider
@@ -588,6 +590,10 @@ object CallNotifications {
 
     private var fgOn = false
     private var useFg = true // flips off if Android refuses to promote the service
+    private var channelsReady = false
+    /** What the posted notifications currently say. Telecom fires onDetailsChanged often; an identical notification is not re-posted. */
+    private var lastIncoming: String? = null
+    private var lastOngoing: String? = null
     private const val FLAGS = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 
     fun uiIntent(ctx: Context) = Intent(ctx, InCallActivity::class.java)
@@ -604,6 +610,8 @@ object CallNotifications {
     }
 
     private fun ensureChannels(nm: NotificationManager) {
+        if (channelsReady) return
+        channelsReady = true
         if (nm.getNotificationChannel(CH_INCOMING) == null) {
             nm.createNotificationChannel(NotificationChannel(CH_INCOMING, "Incoming calls", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Full-screen incoming call alerts. Ringtone is played by the system."
@@ -637,7 +645,7 @@ object CallNotifications {
     fun clearAll(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         nm.cancel(ID_INCOMING); nm.cancel(ID_ONGOING)
-        posted.clear(); quiet.clear(); fgOn = false
+        posted.clear(); quiet.clear(); fgOn = false; lastIncoming = null; lastOngoing = null
     }
 
     /** Switches a quiet incoming notification to the loud channel. Returns true if it changed (caller re-syncs). */
@@ -645,6 +653,7 @@ object CallNotifications {
         if (quiet[callId] != true) return false
         quiet[callId] = false
         posted.remove(callId)
+        lastIncoming = null
         ctx.getSystemService(NotificationManager::class.java)?.cancel(ID_INCOMING) // cancel first, or the update stays silent
         Diag.log("notif_escalated", callId, "call screen did not appear")
         return true
@@ -655,12 +664,14 @@ object CallNotifications {
         ensureChannels(nm)
         val top = all.filter { it.parentId == null && it.isLive }
         val ringing = top.firstOrNull { it.state == Call.STATE_RINGING }
-        if (ringing != null) postIncoming(ctx, nm, ringing) else nm.cancel(ID_INCOMING)
+        if (ringing != null) postIncoming(ctx, nm, ringing)
+        else if (lastIncoming != null) { nm.cancel(ID_INCOMING); lastIncoming = null }
         val ongoing = CallManager.pickPrimary(top.filter { it.state != Call.STATE_RINGING })?.takeIf { !it.isEnded }
         if (ongoing != null) postOngoing(ctx, nm, ongoing, svc)
-        else {
+        else if (fgOn || lastOngoing != null) {
             if (fgOn) { svc?.let { ServiceCompat.stopForeground(it, ServiceCompat.STOP_FOREGROUND_REMOVE) }; fgOn = false }
             nm.cancel(ID_ONGOING)
+            lastOngoing = null
         }
     }
 
@@ -670,14 +681,16 @@ object CallNotifications {
 
     @SuppressLint("FullScreenIntentPolicy")
     private fun postIncoming(ctx: Context, nm: NotificationManager, c: CallInfo) {
-        val open = PendingIntent.getActivity(ctx, 10, uiIntent(ctx), FLAGS)
-        val answer = PendingIntent.getActivity(ctx, 11, uiIntent(ctx).putExtra(EXTRA_ACTION, "answer"), FLAGS)
-        val decline = PendingIntent.getBroadcast(ctx, 12,
-            Intent(ctx, CallActionReceiver::class.java).setAction(ACTION_DECLINE), FLAGS)
         val isQuiet = quiet.getOrPut(c.id) {
             val usable = ctx.getSystemService(PowerManager::class.java).isInteractive && !ctx.getSystemService(KeyguardManager::class.java).isKeyguardLocked
             Prefs.directLaunch.value && usable
         }
+        val key = "${c.id}|${c.name}|${c.number}|${c.presentation}|${c.isConference}|${c.sim}|$isQuiet"
+        if (key == lastIncoming) return
+        val open = PendingIntent.getActivity(ctx, 10, uiIntent(ctx), FLAGS)
+        val answer = PendingIntent.getActivity(ctx, 11, uiIntent(ctx).putExtra(EXTRA_ACTION, "answer"), FLAGS)
+        val decline = PendingIntent.getBroadcast(ctx, 12,
+            Intent(ctx, CallActionReceiver::class.java).setAction(ACTION_DECLINE), FLAGS)
         val n = NotificationCompat.Builder(ctx, if (isQuiet) CH_INCOMING_QUIET else CH_INCOMING)
             .setSmallIcon(R.drawable.ic_call_notification)
             .setContentTitle(c.title())
@@ -696,6 +709,7 @@ object CallNotifications {
             .build()
         try {
             nm.notify(ID_INCOMING, n)
+            lastIncoming = key
             Diag.log(if (posted.add(c.id)) "notif_posted" else "notif_updated", c.id, "kind=incoming")
         } catch (e: SecurityException) { Diag.log("notif_failed", c.id, "SecurityException") }
     }
@@ -704,6 +718,8 @@ object CallNotifications {
     private var ongoingCallStyle = true
 
     private fun postOngoing(ctx: Context, nm: NotificationManager, c: CallInfo, svc: android.app.Service?) {
+        val key = "${c.id}|${c.name}|${c.number}|${c.presentation}|${c.isConference}|${c.sim}|${c.state == Call.STATE_HOLDING}|${c.connectedAt}"
+        if (key == lastOngoing) return
         val open = PendingIntent.getActivity(ctx, 20, uiIntent(ctx), FLAGS)
         val hangup = PendingIntent.getBroadcast(ctx, 21,
             Intent(ctx, CallActionReceiver::class.java).setAction(ACTION_HANGUP), FLAGS)
@@ -727,6 +743,7 @@ object CallNotifications {
             try {
                 ServiceCompat.startForeground(svc, ID_ONGOING, build(true), if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL else 0)
                 fgOn = true
+                lastOngoing = key
                 return
             } catch (e: Exception) {
                 useFg = false
@@ -735,10 +752,11 @@ object CallNotifications {
         }
         try {
             nm.notify(ID_ONGOING, build(ongoingCallStyle))
+            lastOngoing = key
         } catch (e: IllegalArgumentException) {
             ongoingCallStyle = false
             Diag.log("notif_fallback", c.id, "kind=ongoing plain")
-            try { nm.notify(ID_ONGOING, build(false)) } catch (_: Exception) { }
+            try { nm.notify(ID_ONGOING, build(false)); lastOngoing = key } catch (_: Exception) { }
         } catch (e: SecurityException) { }
     }
 }

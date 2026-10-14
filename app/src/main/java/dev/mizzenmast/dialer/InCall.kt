@@ -102,6 +102,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 class InCallActivity : ComponentActivity() {
     private var proxLock: PowerManager.WakeLock? = null
+    private var keepOn = false
     private var inPip by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,7 +113,6 @@ class InCallActivity : ComponentActivity() {
 
         // Lock-screen presentation via documented APIs (manifest attrs cover API 27+, this covers older + is explicit)
         setShowWhenLocked(true); setTurnScreenOn(true)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enableEdgeToEdge()
 
         setContent {
@@ -133,7 +133,7 @@ class InCallActivity : ComponentActivity() {
         }
         lifecycleScope.launch {
             combine(CallManager.calls, CallManager.audio) { l, a -> l to a }.collect { (list, audio) ->
-                if (list.isEmpty()) finishAndRemoveTask() else updateProximity(list, audio)
+                if (list.isEmpty()) finishAndRemoveTask() else { updateProximity(list, audio); updateKeepOn(list) }
             }
         }
     }
@@ -202,6 +202,28 @@ class InCallActivity : ComponentActivity() {
             }
         } else releaseProximity()
     }
+
+    /**
+     * Ringing and video always hold the screen on. For a normal call it depends on the "Power button ends call" accessibility setting:
+     * when it is on, a timed-out screen could only be woken by hanging up, so the screen stays on for the whole call. When it is off
+     * (most people) the system's screen timeout applies, like the stock dialer, and a long speaker call stops lighting the display.
+     * The proximity lock still handles the ear either way. If the setting can't be read we assume it is on (the safe side).
+     */
+    private fun updateKeepOn(list: List<CallInfo>) {
+        val live = list.filter { !it.isEnded }
+        val special = live.any { it.state == Call.STATE_RINGING || it.isVideo }
+        val need = live.isNotEmpty() && (special || powerButtonEndsCall())
+        if (need == keepOn) return
+        keepOn = need
+        Diag.log("keep_screen_on", CallManager.currentCallId(), "on=$need powerButtonEndsCall=${powerButtonEndsCall()}")
+        if (need) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    /** Settings.Secure.INCALL_POWER_BUTTON_BEHAVIOR is hidden from the SDK; its key is "incall_power_button_behavior", 1 = screen off, 2 = hang up. */
+    private fun powerButtonEndsCall(): Boolean = try {
+        android.provider.Settings.Secure.getInt(contentResolver, "incall_power_button_behavior", 1) == 2
+    } catch (e: Exception) { true }
 
     private fun releaseProximity() {
         proxLock?.let { if (it.isHeld) it.release() }
@@ -340,8 +362,10 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
     var routes by remember { mutableStateOf(false) }
     var typed by remember(call.id) { mutableStateOf("") }
     val isActive = call.state == Call.STATE_ACTIVE
-    val now by produceState(System.currentTimeMillis(), isActive) {
-        while (isActive) { value = System.currentTimeMillis(); delay(1000.milliseconds) }
+    // The clock only ticks while the call screen is on screen: a call that runs for an hour behind another app must not wake the CPU every second.
+    val visible by CallManager.uiVisible.collectAsState()
+    val now by produceState(System.currentTimeMillis(), isActive, visible) {
+        while (isActive && visible) { value = System.currentTimeMillis(); delay(1000.milliseconds) }
     }
 
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -567,7 +591,8 @@ private fun VideoBtn(icon: ImageVector, label: String, on: Boolean = false, modi
 /** Own composable so the once-a-second tick doesn't recompose the whole video screen. */
 @Composable
 private fun CallClock(connectedAt: Long) {
-    val now by produceState(System.currentTimeMillis()) { while (true) { value = System.currentTimeMillis(); delay(1000.milliseconds) } }
+    val visible by CallManager.uiVisible.collectAsState()
+    val now by produceState(System.currentTimeMillis(), visible) { while (visible) { value = System.currentTimeMillis(); delay(1000.milliseconds) } }
     Text(if (connectedAt > 0) fmtDur((now - connectedAt) / 1000) else "Connected", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
 }
 

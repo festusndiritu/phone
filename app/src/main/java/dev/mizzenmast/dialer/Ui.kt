@@ -107,7 +107,10 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 object Photos {
-    private val cache = LruCache<String, Bitmap>(60)
+    // Sized in bytes: 60 entries of a large thumbnail was an unbounded amount of heap.
+    private val cache = object : LruCache<String, Bitmap>(8 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
+    }
     suspend fun load(ctx: Context, uri: String): Bitmap? {
         cache.get(uri)?.let { return it }
         return withContext(Dispatchers.IO) {
@@ -148,7 +151,7 @@ fun Avatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifie
     Box(modifier.size(size).clip(CircleShape).background(tint), contentAlignment = Alignment.Center) {
         val b = bmp
         if (b != null) {
-            Image(b.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Image(remember(b) { b.asImageBitmap() }, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         } else {
             if (ini.isNotEmpty()) Text(ini, color = ink, fontSize = (size.value * 0.38f).sp, fontWeight = FontWeight.Medium)
             else Icon(Icons.Rounded.Person, null, tint = c.inkDim, modifier = Modifier.size(size * 0.5f))

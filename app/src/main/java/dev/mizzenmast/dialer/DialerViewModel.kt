@@ -124,14 +124,27 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var logJob: Job? = null
     private var contactJob: Job? = null
+    private var active = false
 
     init { onPermissionsChanged() }
+
+    /**
+     * The contacts and call-log observers run only while the app is on screen. Every contact sync (Google, WhatsApp) used to
+     * wake the process and rebuild the whole contact list, call log and every derived list, all day, with nobody looking.
+     * Starting the observers again reloads once, so the lists are fresh the moment the app comes back.
+     */
+    fun setActive(on: Boolean) {
+        if (active == on) return
+        active = on
+        if (on) onPermissionsChanged()
+        else { contactJob?.cancel(); contactJob = null; logJob?.cancel(); logJob = null }
+    }
 
     /** Call after any permission/role change and on resume. Starts or stops provider observers accordingly. */
     fun onPermissionsChanged() {
         tick.value += 1
         if (ctx.granted(Manifest.permission.READ_CONTACTS)) {
-            if (contactJob == null) contactJob = viewModelScope.launch {
+            if (active && contactJob == null) contactJob = viewModelScope.launch {
                 ContactsRepo.changes(ctx).conflate().collect { reloadContacts(); delay(500) }
             }
         } else {
@@ -139,7 +152,7 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
             _contacts.value = Load.Denied
         }
         if (ctx.granted(Manifest.permission.READ_CALL_LOG)) {
-            if (logJob == null) logJob = viewModelScope.launch {
+            if (active && logJob == null) logJob = viewModelScope.launch {
                 CallLogRepo.changes(ctx).conflate().collect { reloadLog(); delay(250) }
             }
         } else {
@@ -149,12 +162,14 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun reloadContacts() {
-        _contacts.value = try {
+        try {
             val all = withContext(Dispatchers.IO) { ContactsRepo.loadAll(ctx) }
             val starred = all.count { it.starred }
             Diag.log("contacts_loaded", 0, "n=" + all.size + " starred=" + starred) // counts only; shows up in Share log
-            Load.Ready(all)
-        } catch (e: Exception) { Load.Failed(e.message ?: "Could not read contacts") }
+            _contacts.value = Load.Ready(all)
+        } catch (e: CancellationException) {
+            throw e // the observer was stopped mid-load: not an error to show
+        } catch (e: Exception) { _contacts.value = Load.Failed(e.message ?: "Could not read contacts") }
     }
 
     /**
