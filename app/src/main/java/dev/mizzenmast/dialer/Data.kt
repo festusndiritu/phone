@@ -209,6 +209,12 @@ object CallLogRepo {
         return out
     }
 
+    /** Wipes the whole call log (every call, not just what Recents currently shows). True unless the system refused. */
+    fun clear(ctx: Context): Boolean = try {
+        ctx.contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
+        true
+    } catch (e: SecurityException) { false }
+
     /** Returns how many rows were removed. */
     fun delete(ctx: Context, ids: Collection<Long>): Int = try {
         ids.chunked(200).sumOf { chunk ->

@@ -357,6 +357,13 @@ fun Toggle(checked: Boolean, onChange: ((Boolean) -> Unit)?) {
     }
 }
 
+/** Puts [number] on the clipboard. Android 13+ shows its own "copied" confirmation, so only older versions get a toast. */
+fun copyNumber(ctx: Context, number: String) {
+    ctx.getSystemService(android.content.ClipboardManager::class.java)
+        ?.setPrimaryClip(android.content.ClipData.newPlainText("Phone number", number))
+    if (android.os.Build.VERSION.SDK_INT < 33) android.widget.Toast.makeText(ctx, "Number copied", android.widget.Toast.LENGTH_SHORT).show()
+}
+
 /** Long-press menu for a phone number: copy it, or drop it into the dialer to edit before calling. */
 @Composable
 fun NumberMenu(number: String, onEdit: () -> Unit, onDismiss: () -> Unit) {
@@ -374,9 +381,7 @@ fun NumberMenu(number: String, onEdit: () -> Unit, onDismiss: () -> Unit) {
         Column(Modifier.clip(RoundedCornerShape(24.dp)).background(c.surface).padding(vertical = 12.dp)) {
             Text(pretty(number) ?: number, color = c.inkDim, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
             Item(Icons.Rounded.ContentCopy, "Copy number") {
-                ctx.getSystemService(android.content.ClipboardManager::class.java)
-                    ?.setPrimaryClip(android.content.ClipData.newPlainText("Phone number", number))
-                if (android.os.Build.VERSION.SDK_INT < 33) android.widget.Toast.makeText(ctx, "Number copied", android.widget.Toast.LENGTH_SHORT).show()
+                copyNumber(ctx, number)
                 onDismiss()
             }
             Item(Icons.Rounded.Edit, "Edit before call") { onDismiss(); onEdit() }

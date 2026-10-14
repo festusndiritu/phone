@@ -2,6 +2,7 @@ package dev.mizzenmast.dialer
 
 import android.Manifest
 import android.app.Application
+import android.provider.CallLog
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -64,6 +65,12 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
     val recents: StateFlow<Load<RecentsModel>> = combine(_log, index, logFilter) { l, idx, f ->
         l.mapReady { buildRecents(ctx, it, f == 1, idx) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, Load.Loading)
+
+    /** Number of the most recent call *you placed* (not the newest log entry, which may be incoming or missed). Null when none. */
+    val lastDialed: StateFlow<String?> = _log
+        .map { l -> (l as? Load.Ready)?.data?.firstOrNull { it.type == CallLog.Calls.OUTGOING_TYPE && it.number.isNotBlank() }?.number }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Per SIM slot (1, 2): normalised numbers that appear in the call log on that SIM. Empty when slots are unknown (single SIM, API < 30). */
     val simNumbers: StateFlow<Map<Int, Set<String>>> = _log
@@ -195,6 +202,15 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
     fun setStarred(id: Long, starred: Boolean, onFail: () -> Unit) {
         viewModelScope.launch {
             if (!withContext(Dispatchers.IO) { ContactsRepo.setStarred(ctx, id, starred) }) onFail()
+        }
+    }
+
+    /** Deletes the entire call log. [onDone] gets false if the system refused. */
+    fun clearLog(onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { CallLogRepo.clear(ctx) }
+            if (ok) reloadLog()
+            onDone(ok)
         }
     }
 
