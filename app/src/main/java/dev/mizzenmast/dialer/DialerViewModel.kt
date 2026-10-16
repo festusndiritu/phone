@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Smart filters at the top of Contacts. The SIM filters use the call log: people you've called or been called by on that SIM. */
 enum class ContactFilter { All, Sim1, Sim2, Favorites }
@@ -74,7 +75,7 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    /** Per SIM slot (1, 2): normalised numbers that appear in the call log on that SIM. Empty when slots are unknown (single SIM, API < 30). */
+    /** Per SIM slot (1, 2): normalized numbers that appear in the call log on that SIM. Empty when slots are unknown (single SIM, API < 30). */
     val simNumbers: StateFlow<Map<Int, Set<String>>> = _log
         .map { l -> simNumbersOf((l as? Load.Ready)?.data.orEmpty()) }
         .flowOn(Dispatchers.Default)
@@ -103,9 +104,9 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun simNumbersOf(log: List<LogEntry>): Map<Int, Set<String>> {
         val out = HashMap<Int, MutableSet<String>>()
-        for (e in log) {
-            val slot = e.simSlot ?: continue
-            val k = ContactIndex.key(e.number)
+        for ((_, number, _, _, _, _, _, _, simSlot) in log) {
+            val slot = simSlot ?: continue
+            val k = ContactIndex.key(number)
             if (k.isNotEmpty()) out.getOrPut(slot) { HashSet() }.add(k)
         }
         return out
@@ -154,7 +155,7 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
         tick.value += 1
         if (ctx.granted(Manifest.permission.READ_CONTACTS)) {
             if (active && contactJob == null) contactJob = viewModelScope.launch {
-                ContactsRepo.changes(ctx).conflate().collect { reloadContacts(); delay(500) }
+                ContactsRepo.changes(ctx).conflate().collect { reloadContacts(); delay(500.milliseconds) }
             }
         } else {
             contactJob?.cancel(); contactJob = null
@@ -162,7 +163,7 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (ctx.granted(Manifest.permission.READ_CALL_LOG)) {
             if (active && logJob == null) logJob = viewModelScope.launch {
-                CallLogRepo.changes(ctx).conflate().collect { reloadLog(); delay(250) }
+                CallLogRepo.changes(ctx).conflate().collect { reloadLog(); delay(250.milliseconds) }
             }
         } else {
             logJob?.cancel(); logJob = null
@@ -200,7 +201,7 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The contacts observer reloads the list afterwards, so the UI follows on its own. */
+    /** The contacts observer reloads the list afterward, so the UI follows on its own. */
     fun setStarred(id: Long, starred: Boolean, onFail: () -> Unit) {
         viewModelScope.launch {
             if (!withContext(Dispatchers.IO) { ContactsRepo.setStarred(ctx, id, starred) }) onFail()

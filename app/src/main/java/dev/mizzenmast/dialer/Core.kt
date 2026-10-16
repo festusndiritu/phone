@@ -31,8 +31,6 @@ object Core {
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             try {
-                // Full frames ("a.b.c(SourceFile:12)"): in a release build the names are obfuscated, and `retrace mapping.txt` needs
-                // class + method + line to map them back.
                 val frames = e.stackTrace.take(4).joinToString(" < ") { it.toString() }
                 Diag.logSync("crash", 0, "${e.javaClass.simpleName}: ${e.message?.take(80)} @ $frames")
             } catch (_: Throwable) { }
@@ -56,7 +54,6 @@ object Prefs {
     @Synchronized
     fun init(app: Context, dp: Context) {
         if (sp != null) return
-        // One-time move of prefs saved by older builds in credential-protected storage.
         try {
             if (app.getSystemService(android.os.UserManager::class.java)?.isUserUnlocked == true)
                 dp.moveSharedPreferencesFrom(app, "dialer_prefs")
@@ -69,7 +66,6 @@ object Prefs {
         gestureHints.value = p.getBoolean("gesture_hints", true)
         directLaunch.value = p.getBoolean("direct_launch", true)
         diagnostics.value = p.getBoolean("diagnostics", true)
-        // New key: the old "show_favorites" could have been left off by an earlier build whose Settings toggle no longer exists.
         showFavorites.value = p.getBoolean("show_favorites_row", true)
         silenceUnknown.value = p.getBoolean("silence_unknown", false)
         onboarded.value = p.getBoolean("onboarded", false)
@@ -162,7 +158,7 @@ object Diag {
     }
 
     fun report(all: List<Event>): String {
-        val sb = StringBuilder("Dialer diagnostics (no numbers/names logged)\n")
+        val sb = StringBuilder("Dialer diagnostics\n")
         sb.append("App version: $version\n")
         sb.append("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n\n")
         sb.append("== Event log (crashes and call lifecycle; t = ms since first event) ==\n")
