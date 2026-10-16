@@ -99,7 +99,7 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
     val q by vm.query.collectAsState()
     val filter by vm.contactFilter.collectAsState()
     val sims by vm.simNumbers.collectAsState()
-    // SIM chips only exist when the call log knows which slot calls used (multi-SIM, API 30+). Otherwise they'd always be empty.
+    // SIM chips only exist when the call log knows which slot calls used
     val simChips = sims.isNotEmpty()
     val active = if (!simChips && (filter == ContactFilter.Sim1 || filter == ContactFilter.Sim2)) ContactFilter.All else filter
 
@@ -167,10 +167,8 @@ fun SearchField(
             modifier = Modifier.weight(1f).padding(vertical = 14.dp).focusRequester(focus),
             decorationBox = { inner -> Box { if (value.isEmpty()) Text(placeholder, color = c.inkDim, fontSize = 16.sp); inner() } }
         )
-        // Fixed 48dp slot, so the field doesn't change width when the button appears.
+
         Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-            // Fully qualified on purpose: inside Row { Box { } } the implicit RowScope receiver is blocked
-            // by the @LayoutScopeMarker DSL rules, so the plain call resolves to RowScope.AnimatedVisibility and fails.
             androidx.compose.animation.AnimatedVisibility(
                 visible = value.isNotEmpty(),
                 enter = if (motion) fadeIn() + scaleIn(initialScale = 0.7f) else EnterTransition.None,
