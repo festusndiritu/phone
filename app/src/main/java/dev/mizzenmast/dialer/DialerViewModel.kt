@@ -38,6 +38,8 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
     val detailLog = MutableStateFlow<LogEntry?>(null)
     /** Entry whose full call history is open (same person/number as [detailLog]). */
     val historyLog = MutableStateFlow<LogEntry?>(null)
+    /** True while a list is showing its contextual selection bar; MainShell tints the status bar to match so the bar reads edge to edge. */
+    val selectionActive = MutableStateFlow(false)
     val detailContact = MutableStateFlow<Contact?>(null)
     val tick = MutableStateFlow(0)
     val contactFilter = MutableStateFlow(ContactFilter.All)

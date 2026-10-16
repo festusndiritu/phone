@@ -1,6 +1,3 @@
-@file:OptIn(ExperimentalFoundationApi::class)
-@file:Suppress("DEPRECATION")
-
 package dev.mizzenmast.dialer
 
 import android.app.role.RoleManager
@@ -9,11 +6,10 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.provider.CallLog
-import android.provider.Settings
+import android.telecom.PhoneAccountHandle
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -28,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,31 +39,27 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Message
-import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Backspace
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Backspace
+import androidx.compose.material.icons.automirrored.rounded.CallMade
+import androidx.compose.material.icons.automirrored.rounded.CallMissed
+import androidx.compose.material.icons.automirrored.rounded.CallReceived
 import androidx.compose.material.icons.rounded.Block
-import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Call
-import androidx.compose.material.icons.rounded.CallMade
-import androidx.compose.material.icons.rounded.CallMissed
-import androidx.compose.material.icons.rounded.CallReceived
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.rounded.PersonAdd
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
-import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.Notifications
-import androidx.compose.material.icons.rounded.RadioButtonUnchecked
-import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -87,7 +80,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -109,18 +101,17 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class SettingsTarget { AppDetails, Notifications, FullScreen, Overlay, Battery, Sound, CallingAccounts, Blocked }
 
@@ -134,7 +125,7 @@ class Actions(
     val requestRole: () -> Unit,
     val open: (SettingsTarget) -> Unit,
     val call: (String) -> Unit,
-    val callWith: (String, android.telecom.PhoneAccountHandle) -> Unit,
+    val callWith: (String, PhoneAccountHandle) -> Unit,
     val openContact: (Contact) -> Unit,
     val message: (String) -> Unit,
     val whatsapp: (String) -> Unit,
@@ -181,9 +172,9 @@ private fun rowDescription(ctx: Context, e: LogEntry): String =
 
 /** Every call type gets an arrow, so the first glyph in every row has the same shape and weight. */
 private fun typeIcon(t: Int): ImageVector = when (t) {
-    CallLog.Calls.OUTGOING_TYPE -> Icons.Rounded.CallMade
-    CallLog.Calls.MISSED_TYPE, CallLog.Calls.REJECTED_TYPE, CallLog.Calls.BLOCKED_TYPE -> Icons.Rounded.CallMissed
-    else -> Icons.Rounded.CallReceived // incoming, answered elsewhere, voicemail
+    CallLog.Calls.OUTGOING_TYPE -> Icons.AutoMirrored.Rounded.CallMade
+    CallLog.Calls.MISSED_TYPE, CallLog.Calls.REJECTED_TYPE, CallLog.Calls.BLOCKED_TYPE -> Icons.AutoMirrored.Rounded.CallMissed
+    else -> Icons.AutoMirrored.Rounded.CallReceived // incoming, answered elsewhere, voicemail
 }
 
 /** Green in, blue out, red missed/declined/blocked. Anything else stays neutral. */
@@ -244,7 +235,7 @@ private fun Overlay(onBack: () -> Unit, content: @Composable () -> Unit) {
     // The empty pointerInput makes the overlay swallow touches, so taps never fall through to the screen underneath.
     Column(Modifier.fillMaxSize().background(c.bg).pointerInput(Unit) { detectTapGestures { } }) {
         Box(Modifier.padding(start = 8.dp, top = 8.dp).size(48.dp).clip(CircleShape).clickable(onClickLabel = "Back", onClick = onBack), contentAlignment = Alignment.Center) {
-            Icon(Icons.Rounded.ArrowBack, "Back", tint = c.ink)
+            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = c.ink)
         }
         content()
     }
@@ -314,6 +305,7 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
     }
     val groups = remember(shown) { shown.filterIsInstance<RItem.Group>() }
     fun selectAll() { selected.clear(); selected.addAll(groups.map { it.first.id }) }
+    DisposableEffect(selecting) { vm.selectionActive.value = selecting; onDispose { vm.selectionActive.value = false } }
 
     Column(Modifier.fillMaxSize()) {
         when {
@@ -323,14 +315,14 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                     // One row: everything you can do with it. Several rows: just delete.
                     if (one != null) {
                         if (one.first.number.isNotBlank()) IconAction(Icons.Rounded.ContentCopy, "Copy number", { copyNumber(ctx, one.first.number); exitSelection() })
-                        if (groups.size > 1) IconAction(Icons.Rounded.SelectAll, "Select all", { selectAll() })
+                        if (groups.size > 1) IconAction(Icons.Rounded.Checklist, "Select all", { selectAll() })
                     }
                     IconAction(Icons.Rounded.Delete, "Delete", { confirmDelete = true })
                 }
             }
             searching -> Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconAction(Icons.Rounded.ArrowBack, "Close search", { closeSearch() })
-                SearchField(query, { query = it; exitSelection() }, placeholder = "Search recents", autoFocus = true, modifier = Modifier.weight(1f))
+                IconAction(Icons.AutoMirrored.Rounded.ArrowBack, "Close search", { closeSearch() })
+                SearchField(value = query, onChange = { query = it; exitSelection() }, placeholder = "Search recents", autoFocus = true, modifier = Modifier.weight(1f))
             }
             else -> ScreenTitle("Recents", trailing = {
                 if (model?.logEmpty == false) {
@@ -340,7 +332,7 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.background(c.surfaceHigh)) {
                             DropdownMenuItem(
                                 text = { Text("Select all", color = c.ink) }, enabled = groups.isNotEmpty(),
-                                leadingIcon = { Icon(Icons.Rounded.SelectAll, null, tint = c.inkDim) },
+                                leadingIcon = { Icon(Icons.Rounded.Checklist, null, tint = c.inkDim) },
                                 onClick = { menu = false; selecting = true; selectAll() })
                             DropdownMenuItem(
                                 text = { Text("Clear call log", color = c.decline) },
@@ -367,7 +359,7 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                 val m = s.data
                 if (shown.isEmpty()) {
                     if (searching && query.isNotBlank()) StateMessage(Icons.Rounded.Search, "No matches")
-                    else StateMessage(Icons.Rounded.CallMissed, "No missed calls")
+                    else StateMessage(Icons.AutoMirrored.Rounded.CallMissed, "No missed calls")
                 } else LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
                     items(
                         shown,
@@ -431,9 +423,17 @@ private fun LogRow(
             .padding(start = 20.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (selecting) { SelectMark(selected); Spacer(Modifier.width(14.dp)) }
-        Avatar(contact?.name ?: e.name, contact?.photo, 48.dp,
-            if (onContact != null && !selecting) Modifier.clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Open contact", onClick = onContact) else Modifier)
+        // The check sits on the avatar's corner, so selecting never moves anything in the row.
+        Box {
+            Avatar(contact?.name ?: e.name, contact?.photo, 48.dp,
+                if (onContact != null && !selecting) Modifier.clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Open contact", onClick = onContact) else Modifier)
+            androidx.compose.animation.AnimatedVisibility(
+                visible = selected,
+                modifier = Modifier.align(Alignment.BottomEnd).offset(x = 4.dp, y = 4.dp),
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.6f),
+                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(targetScale = 0.6f)
+            ) { SelectBadge() }
+        }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(title + if (count > 1) "  ($count)" else "", color = if (missed) c.missed else c.ink, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -459,15 +459,15 @@ private fun relatedEntries(all: Load<List<LogEntry>>, e: LogEntry, contact: Cont
 
 fun timeText(ctx: Context, t: Long): String = DateUtils.formatDateTime(ctx, t, DateUtils.FORMAT_SHOW_TIME)
 
-/** One call: direction arrow, when, SIM slot, duration. [leading] is the checkbox while selecting. */
+/** One call: direction arrow, when, SIM slot, duration. [selected] swaps the arrow for a check, same size, so nothing shifts. */
 @Composable
-private fun HistoryEntryRow(e: LogEntry, showDate: Boolean, reserveSim: Boolean, modifier: Modifier = Modifier, leading: (@Composable () -> Unit)? = null) {
+private fun HistoryEntryRow(e: LogEntry, showDate: Boolean, reserveSim: Boolean, modifier: Modifier = Modifier, selected: Boolean = false) {
     val c = LocalColors.current
     val ctx = LocalContext.current
     val missed = e.type == CallLog.Calls.MISSED_TYPE
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        leading?.invoke()
-        Icon(typeIcon(e.type), null, tint = typeColor(c, e.type), modifier = Modifier.size(18.dp))
+        if (selected) Icon(Icons.Rounded.CheckCircle, "Selected", tint = c.accent, modifier = Modifier.size(18.dp))
+        else Icon(typeIcon(e.type), null, tint = typeColor(c, e.type), modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(12.dp))
         if (reserveSim) {
             Box(Modifier.size(MetaSlot)) {
@@ -658,9 +658,13 @@ private fun matchesFilter(f: Int, t: Int): Boolean = when (f) {
 }
 
 @Composable
-private fun SelectMark(on: Boolean) {
+private fun SelectBadge() {
     val c = LocalColors.current
-    Icon(if (on) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, null, tint = if (on) c.accent else c.inkDim, modifier = Modifier.size(24.dp))
+    // Ring matches the selected row's tint (accent at 12% over the screen), so the badge looks cut out of the avatar.
+    val ring = androidx.compose.ui.graphics.lerp(c.bg, c.accent, 0.12f)
+    Box(Modifier.size(22.dp).background(ring, CircleShape).padding(2.dp).background(c.accent, CircleShape), contentAlignment = Alignment.Center) {
+        Icon(Icons.Rounded.Check, null, tint = c.onAccent, modifier = Modifier.size(14.dp))
+    }
 }
 
 /** Every call with this person, grouped by day. Filters on top; long-press or "Select" to delete several. */
@@ -690,18 +694,27 @@ fun CallHistoryScreen(vm: DialerViewModel, e: LogEntry, contact: Contact?) {
     }
     fun exitSelection() { selecting = false; selected.clear() }
     fun toggle(id: Long) { if (id in selected) selected.remove(id) else selected.add(id); if (selected.isEmpty()) exitSelection() }
+    DisposableEffect(selecting) { vm.selectionActive.value = selecting; onDispose { vm.selectionActive.value = false } }
+    val talkSec = remember(related) { related.sumOf { it.durationSec } }
     BackHandler { if (selecting) exitSelection() else vm.historyLog.value = null }
 
     Column(Modifier.fillMaxSize().background(c.bg).pointerInput(Unit) { detectTapGestures { } }) {
         if (selecting) ContextBar(selected.size, onClose = { exitSelection() }) {
-            if (selected.size == 1 && shown.size > 1) IconAction(Icons.Rounded.SelectAll, "Select all", { selected.clear(); selected.addAll(shown.map { it.id }) })
+            if (selected.size == 1 && shown.size > 1) IconAction(Icons.Rounded.Checklist, "Select all", { selected.clear(); selected.addAll(shown.map { it.id }) })
             IconAction(Icons.Rounded.Delete, "Delete", { confirm = true })
         } else Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconAction(Icons.Rounded.ArrowBack, "Back", { vm.historyLog.value = null })
+            IconAction(Icons.AutoMirrored.Rounded.ArrowBack, "Back", { vm.historyLog.value = null })
             Column(Modifier.weight(1f).padding(start = 8.dp)) {
                 Text("History", color = c.ink, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(e.title(contact), color = c.inkDim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+        // Total over everything with this person, whatever the filter below shows.
+        if (talkSec > 0) Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Call, null, tint = c.inkDim, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Total talk time  ", color = c.inkDim, fontSize = 14.sp)
+            Text(fmtDuration(talkSec), color = c.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("All", "Outgoing", "Incoming", "Missed").forEachIndexed { i, l -> FilterChip(l, filter == i, { filter = i; exitSelection() }) }
@@ -716,8 +729,7 @@ fun CallHistoryScreen(vm: DialerViewModel, e: LogEntry, contact: Contact?) {
                         is HItem.Entry -> {
                             val r = item.e
                             val on = r.id in selected
-                            val lead: (@Composable () -> Unit)? = if (selecting) ({ SelectMark(on); Spacer(Modifier.width(14.dp)) }) else null
-                            HistoryEntryRow(r, showDate = false, reserveSim = anySim, leading = lead,
+                            HistoryEntryRow(r, showDate = false, reserveSim = anySim, selected = on,
                                 modifier = Modifier.fillMaxWidth()
                                     .then(
                                         if (selecting) Modifier.selectable(on, role = Role.Checkbox) { toggle(r.id) }
@@ -816,7 +828,6 @@ fun SimPickerSheet(vm: DialerViewModel, actions: Actions) {
 
 private fun keepDialChars(t: String) = t.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (String) -> Unit) {
     val c = LocalColors.current
@@ -906,7 +917,7 @@ private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (Strin
                         onClick = { backspace() },
                         onLongClick = { apply(TextFieldValue("")) }
                     ), contentAlignment = Alignment.Center
-                ) { Icon(Icons.Rounded.Backspace, "Backspace (long press to clear)", tint = c.inkDim) }
+                ) { Icon(Icons.AutoMirrored.Rounded.Backspace, "Backspace (long press to clear)", tint = c.inkDim) }
             }
         }
     }

@@ -25,7 +25,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
@@ -273,6 +276,7 @@ private fun MainShell(vm: DialerViewModel, actions: Actions) {
     val index by vm.index.collectAsState()
     val dialerOpen by vm.dialerOpen.collectAsState()
     val overlayOpen = detailLog != null || historyLog != null || detailContact != null
+    val selectionActive by vm.selectionActive.collectAsState()
 
     val pager = rememberPagerState(initialPage = tab.coerceIn(0, TAB_COUNT - 1)) { TAB_COUNT }
     val motion = rememberMotionEnabled()
@@ -285,7 +289,12 @@ private fun MainShell(vm: DialerViewModel, actions: Actions) {
     BackHandler(enabled = !overlayOpen && pager.currentPage != 0) { vm.selectTab(0) }
 
     Column(Modifier.fillMaxSize().background(c.bg)) {
-        Box(Modifier.weight(1f).statusBarsPadding()) {
+        // Replaces statusBarsPadding(): the strip takes the contextual bar's colour while selecting (Recents tab or call history),
+        // so status bar and bar read as one surface instead of three bands.
+        val tinted = selectionActive && (historyLog != null || pager.targetPage == 0)
+        val statusTint by animateColorAsState(if (tinted) c.surface else c.bg, label = "statusTint")
+        Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).background(statusTint))
+        Box(Modifier.weight(1f)) {
             HorizontalPager(
                 state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = TAB_COUNT - 1,
                 userScrollEnabled = !overlayOpen, key = { it }
