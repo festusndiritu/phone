@@ -197,7 +197,7 @@ private fun tailText(e: LogEntry): String? = when {
 private val MetaSlot = 16.dp
 
 /**
- * Second line of a recents row: arrow, SIM glyph, time, then duration / "Missed". Same size and colours every time.
+ * Second line of a recents row: arrow, SIM glyph, time, then duration / "Missed". Same size and colors every time.
  * [reserveSim] keeps the SIM slot (empty) for calls without a known slot whenever other rows in the list have one.
  */
 @Composable

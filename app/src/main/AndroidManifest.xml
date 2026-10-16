@@ -13,7 +13,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -81,7 +81,7 @@
             </intent-filter>
         </service>
 
-        <!-- Off until "Silence unknown callers" is switched on in Settings (see Prefs / SettingsScreen), so it adds no per-call work otherwise -->
+        <!-- Off until "Silence unknown callers" is switched on in Settings, so it adds no per-call work -->
         <service
             android:name=".UnknownCallerScreeningService"
             android:exported="true"
