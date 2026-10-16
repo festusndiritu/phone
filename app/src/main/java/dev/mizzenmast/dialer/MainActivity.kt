@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
@@ -68,7 +69,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Core.init(this)
         enableEdgeToEdge()
-        // Someone who already set everything up by hand (an install from before onboarding existed) never sees the guide.
         if (!Prefs.onboarded.value && readSetup(this).essentials) Prefs.set("onboarded", Prefs.onboarded, true)
         handleIntent(intent)
         val actions = Actions(
@@ -154,7 +154,6 @@ class MainActivity : ComponentActivity() {
         }
         val tm = getSystemService(TelecomManager::class.java)
         val sims = simsFor(tm)
-        // "Ask every time" (no default calling SIM): choose here, so the system's own "Call with" dialog never appears.
         if (sims.size > 1 && !hasDefaultTelAccount(tm)) { vm.simPicker.value = n to sims; return }
         placeCall(n, null)
     }
@@ -167,7 +166,7 @@ class MainActivity : ComponentActivity() {
     @android.annotation.SuppressLint("MissingPermission")
     private fun hasDefaultTelAccount(tm: TelecomManager): Boolean = try {
         tm.getDefaultOutgoingPhoneAccount("tel") != null
-    } catch (e: Exception) { true } // can't tell: fall back to Telecom's own handling
+    } catch (e: Exception) { true }
 
     private fun placeCall(n: String, handle: android.telecom.PhoneAccountHandle?) {
         try {
@@ -214,7 +213,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Opens a WhatsApp chat via wa.me. Numbers are normalised to international format using the SIM's country. */
+    /** Opens a WhatsApp chat via wa.me. Numbers are normalized to international format using the SIM's country. */
     private fun whatsapp(number: String) {
         val iso = (getSystemService(android.telephony.TelephonyManager::class.java)?.simCountryIso?.takeIf { it.isNotBlank() }
             ?: java.util.Locale.getDefault().country).uppercase()
@@ -289,7 +288,7 @@ private fun MainShell(vm: DialerViewModel, actions: Actions) {
     BackHandler(enabled = !overlayOpen && pager.currentPage != 0) { vm.selectTab(0) }
 
     Column(Modifier.fillMaxSize().background(c.bg)) {
-        // Replaces statusBarsPadding(): the strip takes the contextual bar's colour while selecting (Recents tab or call history),
+        // Replaces statusBarsPadding(): the strip takes the contextual bar's color while selecting (Recents tab or call history),
         // so status bar and bar read as one surface instead of three bands.
         val tinted = selectionActive && (historyLog != null || pager.targetPage == 0)
         val statusTint by animateColorAsState(if (tinted) c.surface else c.bg, label = "statusTint")
