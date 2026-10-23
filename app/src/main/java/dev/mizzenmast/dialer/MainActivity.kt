@@ -45,7 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 
 class MainActivity : ComponentActivity() {
-    companion object { const val EXTRA_TAB = "tab"; const val EXTRA_OPEN_DIALER = "open_dialer" }
+    companion object { const val EXTRA_TAB = "tab"; const val EXTRA_OPEN_DIALER = "open_dialer"; const val EXTRA_CALL = "call_number" }
 
     private val vm: DialerViewModel by viewModels()
     private var pendingCall: String? = null
@@ -120,6 +120,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        CallNotifications.clearMissed(this)
         vm.onPermissionsChanged() // also refreshes permission/role status rows
     }
 
@@ -127,6 +128,7 @@ class MainActivity : ComponentActivity() {
         i ?: return
         if (i.hasExtra(EXTRA_TAB)) vm.selectTab(i.getIntExtra(EXTRA_TAB, 0).coerceIn(0, 2))
         if (i.getBooleanExtra(EXTRA_OPEN_DIALER, false)) vm.dialerOpen.value = true
+        i.getStringExtra(EXTRA_CALL)?.let { i.removeExtra(EXTRA_CALL); place(it); CallNotifications.clearMissed(this) }
         val data = i.data
         if ((i.action == Intent.ACTION_DIAL || i.action == Intent.ACTION_VIEW) && data?.scheme == "tel") {
             vm.dial.value = Uri.decode(data.schemeSpecificPart.orEmpty())

@@ -335,14 +335,14 @@ private class Ctl(val icon: ImageVector, val label: String, val on: Boolean, val
 private fun CtlButton(ctl: Ctl) {
     val c = LocalColors.current
     val tick = rememberTick()
-    Column(Modifier.width(88.dp).alpha(if (ctl.enabled) 1f else 0.38f), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.width(96.dp).alpha(if (ctl.enabled) 1f else 0.38f), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
-            Modifier.size(64.dp).clip(CircleShape).background(if (ctl.on) c.ink else c.surface)
+            Modifier.size(78.dp).clip(CircleShape).background(if (ctl.on) c.ink else c.surface)
                 .clickable(enabled = ctl.enabled, role = Role.Button, onClick = { tick(); ctl.onClick() }),
             contentAlignment = Alignment.Center
-        ) { Icon(ctl.icon, null, tint = if (ctl.on) c.bg else c.ink) }
-        Spacer(Modifier.height(6.dp))
-        Text(ctl.label, color = c.inkDim, fontSize = 12.sp)
+        ) { Icon(ctl.icon, null, tint = if (ctl.on) c.bg else c.ink, modifier = Modifier.size(34.dp)) }
+        Spacer(Modifier.height(8.dp))
+        Text(ctl.label, color = c.inkDim, fontSize = 13.sp, maxLines = 1)
     }
 }
 
@@ -484,7 +484,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     controls.chunked(3).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { row.forEach { CtlButton(it) } }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { row.forEach { CtlButton(it) } }
                     }
                 }
             }

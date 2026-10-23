@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 data class SimOption(val handle: PhoneAccountHandle, val label: String)
 
@@ -236,6 +237,15 @@ object CallManager {
         idOf.remove(call)
         if (refs.values.none { VideoProfile.isVideo(it.details.videoState) }) _video.value = VideoUi()
         Diag.log("call_removed", id, "cause=${snap.endCode}")
+        if (snap.parentId == null && snap.endCode == DisconnectCause.MISSED && incoming[id] == true) {
+            appCtx?.let { ctx ->
+                CallNotifications.missed(ctx, snap)
+                scope.launch { // Telecom posts its copy around call end; remove it once it has
+                    delay(600.milliseconds); CallNotifications.cancelSystemMissed(ctx)
+                    delay(2.seconds); CallNotifications.cancelSystemMissed(ctx)
+                }
+            }
+        }
         if (snap.parentId == null) {
             lingering[id] = snap.copy(state = Call.STATE_DISCONNECTED, childIds = emptyList(), sims = emptyList())
             publish()
@@ -577,6 +587,10 @@ object CallNotifications {
     private const val CH_INCOMING = "incoming_call_v1"
     private const val CH_INCOMING_QUIET = "incoming_call_quiet_v1"
     private const val CH_ONGOING = "ongoing_call_v1"
+    private const val CH_MISSED = "missed_call_v1"
+    private const val ID_MISSED = 4103
+    const val ACTION_CLEAR_MISSED = "dev.mizzenmast.dialer.CLEAR_MISSED"
+    private val missedCount = HashMap<String, Int>()
     private const val ID_INCOMING = 4101
     private const val ID_ONGOING = 4102
     private val posted = HashSet<Int>()
@@ -631,6 +645,12 @@ object CallNotifications {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             })
         }
+        if (nm.getNotificationChannel(CH_MISSED) == null) {
+            nm.createNotificationChannel(NotificationChannel(CH_MISSED, "Missed calls", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setShowBadge(true)
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            })
+        }
         if (nm.getNotificationChannel(CH_ONGOING) == null) {
             nm.createNotificationChannel(NotificationChannel(CH_ONGOING, "Ongoing calls", NotificationManager.IMPORTANCE_LOW).apply {
                 setSound(null, null)
@@ -638,6 +658,57 @@ object CallNotifications {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             })
         }
+    }
+
+    /**
+     * Our own missed-call notification, so it carries this app's name and icon instead of the system's "Call services" one.
+     * One notification per number; repeat misses from the same number update it with a count.
+     */
+    fun missed(ctx: Context, c: CallInfo) {
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannels(nm)
+        val key = c.number?.takeIf { it.isNotBlank() } ?: "unknown"
+        val count = (missedCount[key] ?: 0) + 1
+        missedCount[key] = count
+        val open = PendingIntent.getActivity(ctx, 30,
+            Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, 0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP), FLAGS)
+        val clear = PendingIntent.getBroadcast(ctx, 31, Intent(ctx, CallActionReceiver::class.java).setAction(ACTION_CLEAR_MISSED), FLAGS)
+        val b = NotificationCompat.Builder(ctx, CH_MISSED)
+            .setSmallIcon(R.drawable.ic_call_notification)
+            .setContentTitle(c.title())
+            .setContentText(if (count > 1) "$count missed calls" else "Missed call")
+            .setSubText(c.sim)
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setContentIntent(open)
+            .setDeleteIntent(clear)
+            .setAutoCancel(true)
+            .setWhen(System.currentTimeMillis())
+        if (c.number != null && c.presentation == TelecomManager.PRESENTATION_ALLOWED) {
+            val callBack = PendingIntent.getActivity(ctx, 32,
+                Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_CALL, c.number).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP), FLAGS)
+            val sms = PendingIntent.getActivity(ctx, 33, Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", c.number, null)), FLAGS)
+            b.addAction(R.drawable.ic_call_notification, "Call back", callBack)
+            b.addAction(R.drawable.ic_call_notification, "Message", sms)
+        }
+        try {
+            nm.notify(key, ID_MISSED, b.build())
+            Diag.log("notif_posted", c.id, "kind=missed")
+        } catch (e: SecurityException) { Diag.fail("missed_notify", e, c.id) }
+    }
+
+    /** Dismisses our missed-call notifications, and the system's own copy if it posted one. */
+    fun clearMissed(ctx: Context) {
+        missedCount.clear()
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        nm.activeNotifications.filter { it.id == ID_MISSED }.forEach { nm.cancel(it.tag, it.id) }
+        cancelSystemMissed(ctx)
+    }
+
+    /** Telecom posts its own missed-call notification when a call ends unanswered. As default dialer we may remove it. */
+    fun cancelSystemMissed(ctx: Context) {
+        try { ctx.getSystemService(TelecomManager::class.java)?.cancelMissedCallsNotification() }
+        catch (e: SecurityException) { Diag.fail("cancel_system_missed", e) }
     }
 
     /** Cancels every call notification this app owns. */
@@ -767,6 +838,7 @@ class CallActionReceiver : BroadcastReceiver() {
         when (intent.action) {
             CallNotifications.ACTION_DECLINE -> CallManager.rejectRinging("notification")
             CallNotifications.ACTION_HANGUP -> CallManager.endPrimary()
+            CallNotifications.ACTION_CLEAR_MISSED -> CallNotifications.clearMissed(ctx)
         }
     }
 }
