@@ -4,11 +4,7 @@ import android.content.Context
 import android.provider.CallLog
 import androidx.compose.runtime.Immutable
 
-/**
- * What the Recents list actually draws. Built off the main thread (see [DialerViewModel.recents]) so that scrolling and
- * recomposition never run number formatting, date formatting or contact lookups: those are slow (PhoneNumberUtils loads
- * libphonenumber metadata on first use, DateUtils builds a formatter per call).
- */
+/** What the Recents list draws. Built off the main thread (see [DialerViewModel.recents]) so scrolling never formats numbers or dates. */
 @Immutable
 sealed interface RItem {
     @Immutable data class Header(val label: String, val key: String) : RItem

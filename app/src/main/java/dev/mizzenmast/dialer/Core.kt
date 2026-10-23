@@ -17,7 +17,7 @@ object Core {
         // Device-protected storage is readable before the first unlock after boot (Direct Boot),
         // which is what lets the in-call UI work with a lock-screen password after a restart.
         val dp = app.createDeviceProtectedStorageContext()
-        Prefs.init(app, dp)
+        Prefs.init(dp)
         Diag.init(dp)
         hookCrashes()
     }
@@ -49,15 +49,10 @@ object Prefs {
     val diagnostics = MutableStateFlow(true)
     val showFavorites = MutableStateFlow(true)
     val silenceUnknown = MutableStateFlow(false)
-    val onboarded = MutableStateFlow(false)
 
     @Synchronized
-    fun init(app: Context, dp: Context) {
+    fun init(dp: Context) {
         if (sp != null) return
-        try {
-            if (app.getSystemService(android.os.UserManager::class.java)?.isUserUnlocked == true)
-                dp.moveSharedPreferencesFrom(app, "dialer_prefs")
-        } catch (_: Exception) { }
         val p = dp.getSharedPreferences("dialer_prefs", Context.MODE_PRIVATE)
         sp = p
         theme.value = p.getInt("theme", 0)
@@ -68,7 +63,6 @@ object Prefs {
         diagnostics.value = p.getBoolean("diagnostics", true)
         showFavorites.value = p.getBoolean("show_favorites_row", true)
         silenceUnknown.value = p.getBoolean("silence_unknown", false)
-        onboarded.value = p.getBoolean("onboarded", false)
     }
 
     fun setTheme(v: Int) { theme.value = v; sp?.edit()?.putInt("theme", v)?.apply() }
@@ -91,9 +85,7 @@ object Prefs {
  * No phone numbers or names are ever logged; calls are identified by a local sequence id.
  */
 object Diag {
-    data class Event(val t: Long, val wall: Long, val name: String, val callId: Int, val detail: String) {
-        fun kv(key: String): String? = detail.split(' ').firstOrNull { it.startsWith("$key=") }?.substringAfter('=')
-    }
+    data class Event(val t: Long, val wall: Long, val name: String, val callId: Int, val detail: String)
 
     private const val MAX = 600
     private val _events = MutableStateFlow<List<Event>>(emptyList())
@@ -143,6 +135,10 @@ object Diag {
             try { f.appendText("${e.t}|${e.wall}|${e.name}|${e.callId}|${e.detail}\n") } catch (_: Exception) { }
         }
     }
+
+    /** A handled failure. [where] names the call site; the detail is the exception class and a short message with long digit runs masked. */
+    fun fail(where: String, e: Throwable, callId: Int = 0) =
+        log("err_$where", callId, e.javaClass.simpleName + (e.message?.let { " " + it.replace(Regex("\\d{4,}"), "#").take(80) } ?: ""))
 
     /** Blocking append, for the crash handler only. */
     fun logSync(name: String, callId: Int, detail: String) {

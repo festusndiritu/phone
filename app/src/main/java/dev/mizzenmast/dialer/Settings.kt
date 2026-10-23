@@ -1,9 +1,6 @@
 package dev.mizzenmast.dialer
 
-import android.Manifest
-import android.app.NotificationManager
 import android.os.Build
-import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -14,7 +11,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,7 +35,6 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Build
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Info
@@ -48,16 +43,13 @@ import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.RadioButtonChecked
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
-import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Vibration
-import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -99,20 +91,12 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
 
     var troubleOpen by rememberSaveable { mutableStateOf(false) }
     var themeDialog by remember { mutableStateOf(false) }
-    val isDefault = remember(tick) { roleHeld(ctx) }
-    val contacts = remember(tick) { ctx.granted(Manifest.permission.READ_CONTACTS) }
-    val callLog = remember(tick) { ctx.granted(Manifest.permission.READ_CALL_LOG) && ctx.granted(Manifest.permission.WRITE_CALL_LOG) }
-    val phone = remember(tick) { ctx.granted(Manifest.permission.CALL_PHONE) }
-    val notif = remember(tick) { Build.VERSION.SDK_INT < 33 || ctx.granted(Manifest.permission.POST_NOTIFICATIONS) }
-    val fsi = remember(tick) { Build.VERSION.SDK_INT < 34 || ctx.getSystemService(NotificationManager::class.java).canUseFullScreenIntent() }
-    val overlay = remember(tick) { Settings.canDrawOverlays(ctx) }
-    val battery = remember(tick) { ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName) }
+    // Everything essential is granted by the time Settings is reachable (see App); only the optional items are shown here.
+    val setup = remember(tick) { readSetup(ctx) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         ScreenTitle("Settings", "Personalize your calling experience")
         Spacer(Modifier.height(8.dp))
-        PhoneSetupCard(isDefault, contacts, callLog, phone, notif, fsi, overlay, actions)
-
         SettingsSection("Calling", "SIMs, sound and call management") {
             NavRow(Icons.Rounded.SimCard, "SIM & calling accounts", "Choose how outgoing calls are placed") { actions.open(SettingsTarget.CallingAccounts) }
             NavRow(Icons.AutoMirrored.Rounded.VolumeUp, "Sound & vibration", "Ringtone, alerts and call sounds") { actions.open(SettingsTarget.Sound) }
@@ -146,20 +130,25 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
         }
 
         SettingsSection("Reliability", "Keep your dialer running smoothly") {
-            if (battery) {
+            if (setup.battery) {
                 StaticRow(Icons.Rounded.BatteryChargingFull, "Battery optimization", "Unrestricted, so calls can show on screen") { StatusPill("Ready", ready = true) }
             } else {
                 ActionRow(Icons.Rounded.BatteryChargingFull, "Battery optimization", "Allow unrestricted use so calls show when power saving is on",
                     onClick = { actions.open(SettingsTarget.Battery) }) { StatusPill("Allow", ready = false) }
             }
+            if (setup.overlay) {
+                StaticRow(Icons.Rounded.OpenInFull, "Display over other apps", "Allowed, so the call screen can open from the background") { StatusPill("Ready", ready = true) }
+            } else {
+                ActionRow(Icons.Rounded.OpenInFull, "Display over other apps", "Optional. Lets the call screen open over whatever you're doing",
+                    onClick = { actions.open(SettingsTarget.Overlay) }) { StatusPill("Allow", ready = false) }
+            }
             NavRow(Icons.Rounded.PowerSettingsNew, "Auto-start & background", "Allow auto-start if calls ring but the screen never opens") { actions.open(SettingsTarget.AppDetails) }
         }
 
         SettingsSection("About & diagnostics", "Support and app information") {
-            ExpandRow(Icons.Rounded.Build, "Troubleshooting", "Setup guide, diagnostic logs and support", troubleOpen) { troubleOpen = !troubleOpen }
+            ExpandRow(Icons.Rounded.Build, "Troubleshooting", "Diagnostic logs and support", troubleOpen) { troubleOpen = !troubleOpen }
             Reveal(troubleOpen) {
                 Column {
-                    NavRow(null, "Setup guide", "Walk through the permissions again", chevron = false) { Prefs.set("onboarded", Prefs.onboarded, false) }
                     ToggleRow(null, "Keep a log", "Crashes and call events. No numbers or names recorded", diag) { Prefs.set("diagnostics", Prefs.diagnostics, it) }
                     NavRow(null, "Share log", "Send the log to whoever is debugging", chevron = false) { actions.share(Diag.report(Diag.events.value)) }
                     NavRow(null, "Clear log", null, chevron = false) { Diag.clear() }
@@ -171,8 +160,6 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
     }
     if (themeDialog) ThemeDialog(theme) { themeDialog = false }
 }
-
-// ---------- structure ----------
 
 /** Title + one-line description, then the rows. No dividers: the spacing between sections does the separating. */
 @Composable
@@ -197,8 +184,6 @@ private fun Reveal(visible: Boolean, content: @Composable () -> Unit) {
         exit = if (motion) fadeOut() + shrinkVertically() else ExitTransition.None
     ) { content() }
 }
-
-// ---------- rows ----------
 
 /** Icon tile, title, optional description, then whatever [trailing] draws. [icon] null indents a child row under its parent's text. */
 @Composable
@@ -302,109 +287,6 @@ private fun StatusPill(text: String, ready: Boolean, onClick: (() -> Unit)? = nu
     if (onClick == null) Pill()
     else Box(Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(24.dp)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 4.dp), contentAlignment = Alignment.Center) { Pill() }
 }
-
-// ---------- phone setup ----------
-
-/**
- * One card for everything the dialer needs. Collapsed it says whether setup is done; the two summary rows are
- * always visible, and tapping the header (or "Review") opens the individual permissions.
- */
-@Composable
-private fun PhoneSetupCard(
-    isDefault: Boolean, contacts: Boolean, callLog: Boolean, phone: Boolean, notif: Boolean, fsi: Boolean, overlay: Boolean,
-    actions: Actions
-) {
-    val c = LocalColors.current
-    val permsOk = contacts && callLog && phone && notif && fsi
-    val ready = isDefault && permsOk
-    val issues = listOf(isDefault, contacts, callLog, phone, notif, fsi).count { !it }
-    var expanded by rememberSaveable { mutableStateOf(!ready) }
-    val turn by animateFloatAsState(if (expanded) 180f else 0f, label = "setupChevron")
-    val tone = if (ready) c.accent else c.hold
-    val shape = RoundedCornerShape(24.dp)
-    val toggleLabel = if (expanded) "Hide details" else "Show details"
-
-    Column(
-        Modifier.padding(horizontal = 20.dp, vertical = 8.dp).fillMaxWidth().clip(shape)
-            .background(tone.copy(alpha = 0.10f)).border(1.dp, tone.copy(alpha = 0.28f), shape)
-    ) {
-        Row(
-            Modifier.fillMaxWidth()
-                .clickable(role = Role.Button, onClickLabel = toggleLabel) { expanded = !expanded }
-                .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(tone), contentAlignment = Alignment.Center) {
-                Icon(if (ready) Icons.Rounded.Check else Icons.Rounded.Warning, null, tint = if (ready) c.onAccent else c.bg, modifier = Modifier.size(22.dp))
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Phone setup", color = c.ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                Text(
-                    if (ready) "Your dialer is ready to make and receive calls." else if (issues == 1) "1 thing needs your attention" else "$issues things need your attention",
-                    color = c.inkDim, fontSize = 13.sp
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Icon(Icons.Rounded.ExpandMore, null, tint = c.inkDim, modifier = Modifier.graphicsLayer { rotationZ = turn })
-        }
-        Column(
-            Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp).fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp)).background(c.bg.copy(alpha = 0.55f)).padding(vertical = 4.dp)
-        ) {
-            SetupSummaryRow(
-                Icons.Rounded.PhoneAndroid, "Default phone app",
-                if (isDefault) "Set as your primary dialer" else "Required to make and receive calls",
-                isDefault, "Set", actions.requestRole
-            )
-            SetupSummaryRow(Icons.Rounded.Security, "Required permissions", "Contacts, calls and notifications", permsOk, "Review") { expanded = true }
-            Reveal(expanded) {
-                Column(Modifier.padding(bottom = 8.dp)) {
-                    SetupDetailRow("Contacts", "Names and photos", contacts, "Allow", actions.requestContacts)
-                    SetupDetailRow("Call history", "Recent calls", callLog, "Allow", actions.requestCallLog)
-                    SetupDetailRow("Phone", "Place calls", phone, "Allow", actions.requestPhone)
-                    SetupDetailRow("Notifications", "Call alerts", notif, "Allow", actions.requestNotifications)
-                    if (Build.VERSION.SDK_INT >= 34) SetupDetailRow("Full-screen alerts", "Show calls over the lock screen", fsi, "Open") { actions.open(SettingsTarget.FullScreen) }
-                    SetupDetailRow("Display over other apps", "Optional", overlay, "Open") { actions.open(SettingsTarget.Overlay) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SetupSummaryRow(icon: ImageVector, title: String, subtitle: String, ok: Boolean, action: String, onAction: () -> Unit) {
-    val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(40.dp).clip(CircleShape).background(c.surface), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = c.ink, modifier = Modifier.size(20.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = c.ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Text(subtitle, color = c.inkDim, fontSize = 12.sp)
-        }
-        Spacer(Modifier.width(8.dp))
-        if (ok) StatusPill("Ready", ready = true) else StatusPill(action, ready = false, onClick = onAction)
-    }
-}
-
-/** A single permission under the summary. The hint only shows while it still needs action. */
-@Composable
-private fun SetupDetailRow(title: String, hint: String, ok: Boolean, action: String, onAction: () -> Unit) {
-    val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 66.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = c.ink, fontSize = 14.sp)
-            if (!ok) Text(hint, color = c.inkDim, fontSize = 12.sp)
-        }
-        Spacer(Modifier.width(8.dp))
-        if (ok) StatusPill("Ready", ready = true) else StatusPill(action, ready = false, onClick = onAction)
-    }
-}
-
-// ---------- theme ----------
 
 @Composable
 private fun ThemeDialog(current: Int, onDismiss: () -> Unit) {

@@ -1,5 +1,4 @@
 @file:OptIn(ExperimentalFoundationApi::class)
-@file:Suppress("DEPRECATION")
 
 package dev.mizzenmast.dialer
 
@@ -39,7 +38,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -66,8 +64,12 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -91,12 +93,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -118,7 +121,7 @@ object Photos {
         return withContext(Dispatchers.IO) {
             try {
                 ctx.contentResolver.openInputStream(uri.toUri())?.use { BitmapFactory.decodeStream(it) }?.also { cache.put(uri, it) }
-            } catch (e: Exception) { null }
+            } catch (e: Exception) { Diag.fail("photo_decode", e); null }
         }
     }
 }
@@ -174,7 +177,6 @@ fun SimChip(label: String, modifier: Modifier = Modifier, compact: Boolean = fal
         else -> null
     }
 
-    // Hide unknown/carrier labels instead of displaying a misleading SIM chip.
     if (slot == null) return
 
     Row(
@@ -255,7 +257,7 @@ fun rememberMotionEnabled(): Boolean {
     val ctx = LocalContext.current
     return remember {
         try { android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f }
-        catch (e: Exception) { true }
+        catch (e: Exception) { Diag.fail("motion_setting", e); true }
     }
 }
 
@@ -371,12 +373,6 @@ fun ScreenTitle(text: String, subtitle: String? = null, trailing: (@Composable (
     }
 }
 
-@Composable
-fun SectionLabel(text: String) {
-    val c = LocalColors.current
-    Text(text, style = T.label, color = c.inkDim, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 8.dp))
-}
-
 /**
  * Switch. Pass [onChange] for a standalone switch; pass null when the surrounding row is the toggleable
  * (one touch target and one accessibility node for the whole row).
@@ -395,11 +391,31 @@ fun Toggle(checked: Boolean, onChange: ((Boolean) -> Unit)?) {
     }
 }
 
+/** One-line messages for the user, drawn as a snackbar by [NoticeHost]. Safe to call from any thread; dropped when no screen is showing. */
+object Notices {
+    private val _flow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val flow: kotlinx.coroutines.flow.SharedFlow<String> = _flow
+    fun show(message: String) { _flow.tryEmit(message) }
+}
+
+@Composable
+fun NoticeHost(modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    val state = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) { Notices.flow.collect { state.showSnackbar(it, duration = SnackbarDuration.Short) } }
+    SnackbarHost(state, modifier) { data ->
+        Box(
+            Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(16.dp)).background(c.ink)
+                .padding(horizontal = 18.dp, vertical = 14.dp).semantics { liveRegion = LiveRegionMode.Polite }
+        ) { Text(data.visuals.message, color = c.bg, fontSize = 14.sp) }
+    }
+}
+
 /** Puts [number] on the clipboard. Android 13+ shows its own "copied" confirmation, so only older versions get a toast. */
 fun copyNumber(ctx: Context, number: String) {
     ctx.getSystemService(android.content.ClipboardManager::class.java)
         ?.setPrimaryClip(android.content.ClipData.newPlainText("Phone number", number))
-    if (android.os.Build.VERSION.SDK_INT < 33) android.widget.Toast.makeText(ctx, "Number copied", android.widget.Toast.LENGTH_SHORT).show()
+    if (android.os.Build.VERSION.SDK_INT < 33) Notices.show("Number copied")
 }
 
 /** Long-press menu for a phone number: copy it, or drop it into the dialer to edit before calling. */

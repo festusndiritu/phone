@@ -91,17 +91,23 @@ private fun letterOf(name: String): Char {
     return if (base.isLetter()) base.uppercaseChar() else '#'
 }
 
-// ---------- screen ----------
-
 @Composable
 fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
     val list by vm.filtered.collectAsState()
     val q by vm.query.collectAsState()
     val filter by vm.contactFilter.collectAsState()
     val sims by vm.simNumbers.collectAsState()
-    // SIM chips only exist when the call log knows which slot calls used
+    val savedIn by vm.savedIn.collectAsState()
+    // SIM chips only exist when the call log knows which slot calls used; storage chips only when contacts live in 2+ places
     val simChips = sims.isNotEmpty()
-    val active = if (!simChips && (filter == ContactFilter.Sim1 || filter == ContactFilter.Sim2)) ContactFilter.All else filter
+    val savedChips = savedIn.size > 1
+    val active = filter.let { f ->
+        when (f) {
+            is ContactFilter.Sim if !simChips -> ContactFilter.All
+            is ContactFilter.Saved if (!savedChips || f.label !in savedIn) -> ContactFilter.All
+            else -> f
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         ScreenTitle("Contacts")
@@ -115,10 +121,13 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
         ) {
             FilterChip("All", active == ContactFilter.All, { vm.contactFilter.value = ContactFilter.All })
             if (simChips) {
-                FilterChip("SIM 1", active == ContactFilter.Sim1, { vm.contactFilter.value = ContactFilter.Sim1 })
-                FilterChip("SIM 2", active == ContactFilter.Sim2, { vm.contactFilter.value = ContactFilter.Sim2 })
+                FilterChip("SIM 1", active == ContactFilter.Sim(1), { vm.contactFilter.value = ContactFilter.Sim(1) })
+                FilterChip("SIM 2", active == ContactFilter.Sim(2), { vm.contactFilter.value = ContactFilter.Sim(2) })
             }
             FilterChip("Favorites", active == ContactFilter.Favorites, { vm.contactFilter.value = ContactFilter.Favorites })
+            if (savedChips) savedIn.forEach { label ->
+                FilterChip(label, active == ContactFilter.Saved(label), { vm.contactFilter.value = ContactFilter.Saved(label) })
+            }
         }
         when (val s = list) {
             Load.Loading -> ListSkeleton()
@@ -128,10 +137,11 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
                 when {
                     q.isNotBlank() -> StateMessage(Icons.Rounded.Search, "No matches")
                     active == ContactFilter.Favorites -> StateMessage(Icons.Rounded.Star, "No favorites yet", "Star a contact and it shows up here")
-                    active == ContactFilter.Sim1 || active == ContactFilter.Sim2 -> StateMessage(
-                        Icons.Rounded.SimCard, "No contacts on SIM ${if (active == ContactFilter.Sim1) 1 else 2}",
+                    active is ContactFilter.Sim -> StateMessage(
+                        Icons.Rounded.SimCard, "No contacts on SIM ${active.slot}",
                         "People you call, or who call you, on this SIM show up here"
                     )
+                    active is ContactFilter.Saved -> StateMessage(Icons.Rounded.Contacts, "Nothing saved in ${active.label}")
                     else -> StateMessage(Icons.Rounded.Contacts, "No contacts")
                 }
             } else {
@@ -246,15 +256,9 @@ private fun ContactList(data: List<Contact>, scrollKey: Any, showRail: Boolean, 
     }
 }
 
-// ---------- alphabet rail ----------
-
 private val BubbleSize = 56.dp
 
-/**
- * Fast-scroll rail. The highlighted letter follows the list while scrolling and the finger while touching; touching also
- * shows a bubble next to the finger. [onJump] gets the letter and whether to animate: the first jump of a touch glides,
- * jumps while dragging are instant so the list keeps up with the finger.
- */
+/** Fast-scroll rail. [onJump] gets the letter and whether to animate: the first jump of a touch glides, drag jumps are instant. */
 @Composable
 private fun AlphabetRail(letters: List<Char>, current: Char, modifier: Modifier = Modifier, onJump: (Char, Boolean) -> Unit) {
     val c = LocalColors.current

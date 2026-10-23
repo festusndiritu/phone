@@ -4,11 +4,9 @@ import android.app.role.RoleManager
 import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
-import android.os.Build
 import android.provider.CallLog
 import android.telecom.PhoneAccountHandle
 import android.text.format.DateUtils
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -137,8 +135,6 @@ class Actions(
     val editBeforeCall: (String) -> Unit
 )
 
-// ---------- helpers ----------
-
 fun fmtDuration(sec: Long): String {
     if (sec <= 0) return "0s"
     val h = sec / 3600; val m = (sec % 3600) / 60; val s = sec % 60
@@ -225,8 +221,7 @@ private fun CallMetaLine(e: LogEntry, time: String, reserveSim: Boolean, modifie
 }
 
 fun roleHeld(ctx: Context): Boolean =
-    if (Build.VERSION.SDK_INT >= 29) ctx.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_DIALER) == true
-    else ctx.getSystemService(android.telecom.TelecomManager::class.java)?.defaultDialerPackage == ctx.packageName
+    ctx.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_DIALER) == true
 
 @Composable
 private fun Overlay(onBack: () -> Unit, content: @Composable () -> Unit) {
@@ -240,8 +235,6 @@ private fun Overlay(onBack: () -> Unit, content: @Composable () -> Unit) {
         content()
     }
 }
-
-// ---------- recents ----------
 
 fun dayKey(t: Long) = (t + java.util.TimeZone.getDefault().getOffset(t)) / 86_400_000L
 
@@ -388,14 +381,14 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
         ConfirmDialog(if (ids.size == 1) "Delete this call?" else "Delete ${ids.size} calls?", null, "Delete",
             onConfirm = {
                 confirmDelete = false
-                vm.deleteLogs(ids) { n -> if (n == 0) Toast.makeText(ctx, "Couldn't delete calls", Toast.LENGTH_SHORT).show() }
+                vm.deleteLogs(ids) { n -> if (n == 0) Notices.show("Couldn't delete calls") }
                 exitSelection()
             }, onDismiss = { confirmDelete = false })
     }
     if (confirmClear) ConfirmDialog("Clear call log?", "This deletes every call in your history, not just the ones shown. It can't be undone.", "Clear",
         onConfirm = {
             confirmClear = false
-            vm.clearLog { ok -> if (!ok) Toast.makeText(ctx, "Couldn't clear call log", Toast.LENGTH_SHORT).show() }
+            vm.clearLog { ok -> if (!ok) Notices.show("Couldn't clear call log") }
             exitSelection()
             closeSearch()
         }, onDismiss = { confirmClear = false })
@@ -612,9 +605,9 @@ fun CallDetailScreen(vm: DialerViewModel, actions: Actions, e: LogEntry, contact
                                 else if (blocked) BlockedRepo.unblock(ctx, number) else BlockedRepo.block(ctx, number)
                             }
                             when (ok) {
-                                null -> Toast.makeText(ctx, "Set as default phone app to block numbers", Toast.LENGTH_SHORT).show()
+                                null -> Notices.show("Set as default phone app to block numbers")
                                 true -> blocked = !blocked
-                                false -> Toast.makeText(ctx, "Couldn't update block list", Toast.LENGTH_SHORT).show()
+                                false -> Notices.show("Couldn't update block list")
                             }
                         }
                     }
@@ -746,12 +739,10 @@ fun CallHistoryScreen(vm: DialerViewModel, e: LogEntry, contact: Contact?) {
     if (confirm) ConfirmDialog(if (selected.size == 1) "Delete this call?" else "Delete ${selected.size} calls?", null, "Delete",
         onConfirm = {
             confirm = false
-            vm.deleteLogs(selected.toList()) { n -> if (n == 0) Toast.makeText(ctx, "Couldn't delete calls", Toast.LENGTH_SHORT).show() }
+            vm.deleteLogs(selected.toList()) { n -> if (n == 0) Notices.show("Couldn't delete calls") }
             exitSelection()
         }, onDismiss = { confirm = false })
 }
-
-// ---------- contacts ----------
 
 @Composable
 fun ContactDetailScreen(vm: DialerViewModel, actions: Actions, ct: Contact) {
@@ -775,8 +766,6 @@ fun ContactDetailScreen(vm: DialerViewModel, actions: Actions, ct: Contact) {
         }
     }
 }
-
-// ---------- keypad ----------
 
 private fun toneFor(ch: Char): Int = when (ch) {
     '*' -> ToneGenerator.TONE_DTMF_S
@@ -836,7 +825,7 @@ private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (Strin
     val dialState by vm.dial.collectAsState()
     val lastDialed by vm.lastDialed.collectAsState()
     val tick = rememberTick()
-    val gen = remember { try { ToneGenerator(AudioManager.STREAM_DTMF, 70) } catch (e: Exception) { null } }
+    val gen = remember { try { ToneGenerator(AudioManager.STREAM_DTMF, 70) } catch (e: Exception) { Diag.fail("tone_generator", e); null } }
     DisposableEffect(Unit) { onDispose { gen?.release() } }
 
     // Local value so the field keeps a real cursor/selection (native select, copy, long-press paste).
@@ -922,8 +911,6 @@ private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (Strin
         }
     }
 }
-
-// ---------- settings ----------
 
 @Composable
 fun StatusRow(title: String, sub: String?, ok: Boolean, action: String?, onAction: () -> Unit) {

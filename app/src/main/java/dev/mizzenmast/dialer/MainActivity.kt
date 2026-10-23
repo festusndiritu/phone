@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.telecom.TelecomManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -25,6 +24,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsTopHeight
@@ -55,12 +57,12 @@ class MainActivity : ComponentActivity() {
         pendingCall = null
         if (p != null) {
             if (r[Manifest.permission.CALL_PHONE] == true || checkSelfPermission(Manifest.permission.CALL_PHONE) == android.content.pm.PackageManager.PERMISSION_GRANTED) place(p)
-            else toast("Phone permission needed")
+            else Notices.show("Phone permission needed")
         }
         pendingStar?.let { (ct, on) ->
             pendingStar = null
             if (checkSelfPermission(Manifest.permission.WRITE_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED) toggleStar(ct, on)
-            else toast("Contacts permission needed")
+            else Notices.show("Contacts permission needed")
         }
     }
     private val roleLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { vm.onPermissionsChanged() }
@@ -69,7 +71,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Core.init(this)
         enableEdgeToEdge()
-        if (!Prefs.onboarded.value && readSetup(this).essentials) Prefs.set("onboarded", Prefs.onboarded, true)
         handleIntent(intent)
         val actions = Actions(
             requestContacts = { askOrSettings(arrayOf(Manifest.permission.READ_CONTACTS)) },
@@ -77,18 +78,17 @@ class MainActivity : ComponentActivity() {
             requestNotifications = {
                 if (Build.VERSION.SDK_INT >= 33) askOrSettings(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) else open(SettingsTarget.Notifications)
             },
-            requestPhone = { askOrSettings(arrayOf(Manifest.permission.CALL_PHONE)) },
+            requestPhone = { askOrSettings(PHONE_PERMS) },
             requestPeople = {
                 askOrSettings(arrayOf(
-                    Manifest.permission.READ_CONTACTS, Manifest.permission.READ_CALL_LOG, Manifest.permission.WRITE_CALL_LOG,
-                    Manifest.permission.CALL_PHONE, Manifest.permission.READ_PHONE_STATE
+                    Manifest.permission.READ_CONTACTS, Manifest.permission.READ_CALL_LOG, Manifest.permission.WRITE_CALL_LOG, *PHONE_PERMS
                 ))
             },
             requestRole = ::requestRole,
             open = ::open,
             call = ::place,
             callWith = ::placeCall,
-            message = { n -> try { startActivity(Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", n, null))) } catch (e: Exception) { toast("No messaging app found") } },
+            message = { n -> try { startActivity(Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", n, null))) } catch (e: Exception) { Diag.fail("open_sms", e); Notices.show("No messaging app found") } },
             whatsapp = ::whatsapp,
             openContact = ::openContact,
             share = ::share,
@@ -134,8 +134,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun toast(m: String) = Toast.makeText(this, m, Toast.LENGTH_SHORT).show()
-
     /** Request runtime permissions. If Android no longer shows the dialog (denied repeatedly), the Settings screen offers "App info". */
     private fun askOrSettings(perms: Array<String>) {
         val missing = perms.filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
@@ -146,53 +144,43 @@ class MainActivity : ComponentActivity() {
     /** Placing calls: real TelecomManager.placeCall, only after CALL_PHONE is granted. */
     private fun place(number: String) {
         val n = number.trim()
-        if (n.isEmpty()) { toast("Enter a number first"); return }
-        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        if (n.isEmpty()) { Notices.show("Enter a number first"); return }
+        if (!granted(Manifest.permission.CALL_PHONE)) {
             pendingCall = n
-            permLauncher.launch(arrayOf(Manifest.permission.CALL_PHONE))
+            permLauncher.launch(PHONE_PERMS.filter { !granted(it) }.toTypedArray())
             return
         }
-        val tm = getSystemService(TelecomManager::class.java)
-        val sims = simsFor(tm)
-        if (sims.size > 1 && !hasDefaultTelAccount(tm)) { vm.simPicker.value = n to sims; return }
+        if (!granted(Manifest.permission.READ_PHONE_STATE)) {
+            Notices.show("Allow phone access in Settings to choose a SIM")
+        } else {
+            val sims = SimLabels.accounts(this)
+            if (sims.size > 1 && !SimLabels.hasDefaultAccount(this)) {
+                vm.simPicker.value = n to sims.map { h -> SimOption(h, SimLabels.label(this, h) ?: "SIM") }
+                return
+            }
+        }
         placeCall(n, null)
     }
-
-    @android.annotation.SuppressLint("MissingPermission")
-    private fun simsFor(tm: TelecomManager): List<SimOption> = try {
-        tm.callCapablePhoneAccounts.map { h -> SimOption(h, try { tm.getPhoneAccount(h)?.label?.toString() } catch (e: Exception) { null } ?: "SIM") }
-    } catch (e: Exception) { emptyList() }
-
-    @android.annotation.SuppressLint("MissingPermission")
-    private fun hasDefaultTelAccount(tm: TelecomManager): Boolean = try {
-        tm.getDefaultOutgoingPhoneAccount("tel") != null
-    } catch (e: Exception) { true }
 
     private fun placeCall(n: String, handle: android.telecom.PhoneAccountHandle?) {
         try {
             val extras = Bundle().apply { if (handle != null) putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle) }
             getSystemService(TelecomManager::class.java).placeCall(Uri.fromParts("tel", n, null), extras)
             Diag.log("place_call_requested")
-        } catch (e: SecurityException) {
-            toast("Couldn't place call")
         } catch (e: Exception) {
-            toast("Couldn't place call")
+            Diag.fail("place_call", e)
+            Notices.show("Couldn't place call")
         }
     }
 
     private fun requestRole() {
-        if (roleHeld(this)) { toast("Already the default"); return }
-        if (Build.VERSION.SDK_INT >= 29) {
-            val rm = getSystemService(RoleManager::class.java)
-            if (!rm.isRoleAvailable(RoleManager.ROLE_DIALER)) { toast("Not available on this device"); return }
-            roleLauncher.launch(rm.createRequestRoleIntent(RoleManager.ROLE_DIALER))
-        } else {
-            roleLauncher.launch(Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, packageName))
-        }
+        if (roleHeld(this)) { Notices.show("Already the default"); return }
+        val rm = getSystemService(RoleManager::class.java)
+        if (!rm.isRoleAvailable(RoleManager.ROLE_DIALER)) { Notices.show("Not available on this device"); return }
+        roleLauncher.launch(rm.createRequestRoleIntent(RoleManager.ROLE_DIALER))
     }
 
-    // The one-tap battery prompt is fine for a sideloaded app, but Google Play restricts it. If this is ever published on Play,
-    // use Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS instead and drop the REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission.
+    // Fine for a sideloaded app; Play restricts it (then use ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS and drop the permission).
     @android.annotation.SuppressLint("BatteryLife")
     private fun open(t: SettingsTarget) {
         val pkg = "package:$packageName".toUri()
@@ -209,7 +197,8 @@ class MainActivity : ComponentActivity() {
             SettingsTarget.Blocked -> getSystemService(TelecomManager::class.java).createManageBlockedNumbersIntent()
         }
         try { startActivity(i) } catch (e: Exception) {
-            try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)) } catch (_: Exception) { toast("Couldn't open settings") }
+            Diag.fail("open_settings", e)
+            try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)) } catch (e2: Exception) { Diag.fail("open_app_settings", e2); Notices.show("Couldn't open settings") }
         }
     }
 
@@ -218,23 +207,23 @@ class MainActivity : ComponentActivity() {
         val iso = (getSystemService(android.telephony.TelephonyManager::class.java)?.simCountryIso?.takeIf { it.isNotBlank() }
             ?: java.util.Locale.getDefault().country).uppercase()
         val digits = (android.telephony.PhoneNumberUtils.formatNumberToE164(number, iso) ?: number).filter(Char::isDigit)
-        if (digits.isEmpty()) { toast("Invalid number"); return }
+        if (digits.isEmpty()) { Notices.show("Invalid number"); return }
         val uri = "https://wa.me/$digits".toUri()
         for (pkg in listOf("com.whatsapp", "com.whatsapp.w4b")) {
             try { startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage(pkg)); return } catch (_: android.content.ActivityNotFoundException) { }
         }
-        toast("WhatsApp not installed")
+        Notices.show("WhatsApp not installed")
     }
 
     private fun openContact(c: Contact) {
         val uri = ContactsContract.Contacts.getLookupUri(c.id, c.lookupKey)
-        try { startActivity(Intent(Intent.ACTION_VIEW, uri)) } catch (e: Exception) { toast("No contacts app found") }
+        try { startActivity(Intent(Intent.ACTION_VIEW, uri)) } catch (e: Exception) { Diag.fail("open_contact", e); Notices.show("No contacts app found") }
     }
 
     private fun addContact(number: String) {
         val i = Intent(Intent.ACTION_INSERT_OR_EDIT).setType(ContactsContract.Contacts.CONTENT_ITEM_TYPE)
             .putExtra(ContactsContract.Intents.Insert.PHONE, number)
-        try { startActivity(i) } catch (e: Exception) { toast("No contacts app found") }
+        try { startActivity(i) } catch (e: Exception) { Diag.fail("add_contact", e); Notices.show("No contacts app found") }
     }
 
     private fun toggleStar(c: Contact, starred: Boolean) {
@@ -243,7 +232,7 @@ class MainActivity : ComponentActivity() {
             permLauncher.launch(arrayOf(Manifest.permission.WRITE_CONTACTS))
             return
         }
-        vm.setStarred(c.id, starred) { toast("Couldn't update favorite") }
+        vm.setStarred(c.id, starred) { Notices.show("Couldn't update favorite") }
     }
 
     private fun share(text: String) {
@@ -251,11 +240,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** The app is only usable once everything essential is granted; revoking one later brings setup back. */
 @Composable
 fun App(vm: DialerViewModel, actions: Actions) {
-    val onboarded by Prefs.onboarded.collectAsState()
-    if (onboarded) MainShell(vm, actions)
-    else OnboardingScreen(vm, actions) { Prefs.set("onboarded", Prefs.onboarded, true) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val tick by vm.tick.collectAsState()
+    val ready = remember(tick) { readSetup(ctx).essentials }
+    Box(Modifier.fillMaxSize()) {
+        if (ready) MainShell(vm, actions) else OnboardingScreen(vm, actions)
+        NoticeHost(
+            if (ready) Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 88.dp)
+            else Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 12.dp)
+        )
+    }
 }
 
 private const val TAB_COUNT = 3

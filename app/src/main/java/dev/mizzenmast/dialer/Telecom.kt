@@ -4,7 +4,10 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.telecom.Connection
 import android.view.Surface
+import android.Manifest
 import android.annotation.SuppressLint
+import androidx.core.content.ContextCompat
+import androidx.core.os.BundleCompat
 import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -15,7 +18,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Bundle
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.PowerManager
@@ -89,7 +92,30 @@ fun stateName(s: Int) = when (s) {
     else -> "STATE_$s"
 }
 
+/**
+ * Audio route and mute state. CallAudioState is deprecated from API 34 (CallEndpoint replaces it) but is the only API
+ * on API 30-33, so it is read here and nowhere else.
+ */
 @Suppress("DEPRECATION")
+data class AudioUi(val route: Int, val mask: Int, val muted: Boolean, val btName: String?) {
+    companion object {
+        const val EARPIECE = CallAudioState.ROUTE_EARPIECE
+        const val SPEAKER = CallAudioState.ROUTE_SPEAKER
+        const val BLUETOOTH = CallAudioState.ROUTE_BLUETOOTH
+        const val WIRED = CallAudioState.ROUTE_WIRED_HEADSET
+
+        fun of(ctx: Context, s: CallAudioState?) = s?.let { AudioUi(it.route, it.supportedRouteMask, it.isMuted, bluetoothName(ctx, it)) }
+
+        /** The device name needs BLUETOOTH_CONNECT from API 31; without it the UI just says "Bluetooth". */
+        private fun bluetoothName(ctx: Context, s: CallAudioState): String? {
+            val device = s.activeBluetoothDevice ?: return null
+            if (Build.VERSION.SDK_INT >= 31 && ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return null
+            return device.name
+        }
+    }
+}
+
+@Suppress("DEPRECATION") // Call.state is deprecated from API 31; Call.details.state needs it
 private fun stateOf(c: Call): Int = if (Build.VERSION.SDK_INT >= 31) c.details.state else c.state
 
 private fun Call.has(cap: Int) = (details.callCapabilities and cap) != 0
@@ -131,10 +157,8 @@ object CallManager {
 
     private val _calls = MutableStateFlow<List<CallInfo>>(emptyList())
     val calls: StateFlow<List<CallInfo>> = _calls
-    private val _audio = MutableStateFlow<CallAudioState?>(null)
-    val audio: StateFlow<CallAudioState?> = _audio
-
-    // ---- video ----
+    private val _audio = MutableStateFlow<AudioUi?>(null)
+    val audio: StateFlow<AudioUi?> = _audio
 
     data class VideoUi(val camOn: Boolean = true, val front: Boolean = true, val peerW: Int = 0, val peerH: Int = 0, val previewAspect: Float = 0.75f,
         /** Camera is being swapped front/rear (released, then re-opened). */ val switching: Boolean = false,
@@ -142,8 +166,6 @@ object CallManager {
 
     private val _video = MutableStateFlow(VideoUi())
     val video: StateFlow<VideoUi> = _video
-    private val _notices = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
-    val notices: kotlinx.coroutines.flow.SharedFlow<String> = _notices
     private val upgradeAsk = HashMap<Int, Int>()
     private val videoCbs = HashMap<Int, InCallService.VideoCall.Callback>()
     private val camBound = HashMap<Int, String>()
@@ -153,12 +175,10 @@ object CallManager {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val videoReqAt = HashMap<Int, Long>()
 
-    // ---- lifecycle (called by DialerInCallService) ----
-
-    @Suppress("DEPRECATION")
+    @Suppress("DEPRECATION") // getCallAudioState: see AudioUi
     fun attach(svc: InCallService) {
         service = WeakReference(svc)
-        _audio.value = svc.callAudioState
+        _audio.value = AudioUi.of(svc, svc.callAudioState)
     }
 
     fun detach() {
@@ -171,7 +191,7 @@ object CallManager {
         ctx?.let { CallNotifications.clearAll(it) }
     }
 
-    fun setAudio(s: CallAudioState?) { _audio.value = s }
+    fun setAudio(s: AudioUi?) { _audio.value = s }
 
     fun onAdded(svc: DialerInCallService, call: Call) {
         val id = Prefs.nextCallId()
@@ -208,8 +228,8 @@ object CallManager {
     fun onRemoved(call: Call) {
         val id = idOf[call] ?: return
         val snap = build(id, call)
-        videoCbs.remove(id)?.let { cb -> try { call.videoCall?.unregisterCallback(cb) } catch (_: Exception) { } }
-        if (camBound.remove(id) != null) try { call.videoCall?.setCamera(null) } catch (_: Exception) { }
+        videoCbs.remove(id)?.let { cb -> try { call.videoCall?.unregisterCallback(cb) } catch (e: Exception) { Diag.fail("video_unregister", e) } }
+        if (camBound.remove(id) != null) try { call.videoCall?.setCamera(null) } catch (e: Exception) { Diag.fail("camera_release", e) }
         upgradeAsk.remove(id)
         callbacks.remove(id)?.let { call.unregisterCallback(it) }
         refs.remove(id)
@@ -233,7 +253,7 @@ object CallManager {
             Diag.log("state_${stateName(state)}", id)
             if (state == Call.STATE_DISCONNECTED) {
                 val dc = call.details.disconnectCause
-                Diag.log("end_cause", id, "code=${dc?.code} reason=${dc?.reason?.take(48)} sinceVideoReq=${videoReqAt[id]?.let { android.os.SystemClock.elapsedRealtime() - it } ?: -1}ms")
+                Diag.log("end_cause", id, "code=${dc?.code} reason=${dc?.reason?.take(48)} sinceVideoReq=${videoReqAt[id]?.let { SystemClock.elapsedRealtime() - it } ?: -1}ms")
             }
             if (state == Call.STATE_ACTIVE) Diag.log("video_caps", id, "canUpgrade=${call.canUpgradeToVideo()} caps=${call.details.callCapabilities} videoState=${call.details.videoState} hasVideoCall=${call.videoCall != null}")
             syncVideo(id, call)
@@ -245,8 +265,6 @@ object CallManager {
         override fun onChildrenChanged(call: Call, children: List<Call>) = publish()
         override fun onConferenceableCallsChanged(call: Call, calls: List<Call>) = publish()
     }
-
-    // ---- snapshot building ----
 
     private fun publish(ctx: Context? = appCtx) {
         val live = refs.map { (id, c) -> build(id, c) }
@@ -312,23 +330,13 @@ object CallManager {
         }
     }
 
-    // Default dialer may call this without READ_PHONE_STATE; SecurityException is caught below.
-    @SuppressLint("MissingPermission")
-    @Suppress("DEPRECATION")
     private fun simOptions(call: Call): List<SimOption> {
         val ctx = appCtx ?: return emptyList()
-        val tm = ctx.getSystemService(TelecomManager::class.java) ?: return emptyList()
-        val extras: Bundle? = call.details.extras
-        var handles: List<PhoneAccountHandle> = try {
-            val key = "selectPhoneAccountAccounts" // Call.AVAILABLE_PHONE_ACCOUNTS
-            (if (Build.VERSION.SDK_INT >= 33) extras?.getParcelableArrayList(key, PhoneAccountHandle::class.java)
-            else extras?.getParcelableArrayList(key)) ?: emptyList()
-        } catch (e: Exception) { emptyList() }
-        if (handles.isEmpty()) handles = try { tm.callCapablePhoneAccounts } catch (e: SecurityException) { emptyList() }
-        return handles.map { h -> SimOption(h, try { tm.getPhoneAccount(h)?.label?.toString() } catch (e: Exception) { null } ?: "SIM") }
+        val key = "selectPhoneAccountAccounts" // Call.AVAILABLE_PHONE_ACCOUNTS
+        val offered = call.details.extras?.let { BundleCompat.getParcelableArrayList(it, key, PhoneAccountHandle::class.java) }
+        val handles = offered?.takeIf { it.isNotEmpty() } ?: SimLabels.accounts(ctx)
+        return handles.map { h -> SimOption(h, SimLabels.label(ctx, h) ?: "SIM") }
     }
-
-    // ---- queries ----
 
     fun topLevel() = _calls.value.filter { it.parentId == null }
     fun ringing(): CallInfo? = topLevel().firstOrNull { it.state == Call.STATE_RINGING }
@@ -345,10 +353,6 @@ object CallManager {
             ?: live.first()
     }
 
-    // ---- operations: every one goes to the real Telecom Call ----
-
-    // ---- video operations ----
-
     private fun withVideo(id: Int, f: (InCallService.VideoCall) -> Unit) {
         try { refs[id]?.videoCall?.let { f(it) } } catch (e: Exception) { Diag.log("video_error", id, e.javaClass.simpleName) }
     }
@@ -357,7 +361,7 @@ object CallManager {
         val cm = ctx.getSystemService(CameraManager::class.java)
         val want = if (front) CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
         cm.cameraIdList.firstOrNull { cm.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == want }
-    } catch (e: Exception) { null }
+    } catch (e: Exception) { Diag.fail("camera_id", e); null }
 
     private fun hookVideo(id: Int, call: Call) {
         val vc = call.videoCall ?: return
@@ -369,13 +373,13 @@ object CallManager {
                 publish()
             }
             override fun onSessionModifyResponseReceived(status: Int, requestedProfile: VideoProfile?, responseProfile: VideoProfile?) {
-                Diag.log("video_response", id, "status=$status after=${videoReqAt.remove(id)?.let { android.os.SystemClock.elapsedRealtime() - it } ?: -1}ms")
+                Diag.log("video_response", id, "status=$status after=${videoReqAt.remove(id)?.let { SystemClock.elapsedRealtime() - it } ?: -1}ms")
                 _video.value = _video.value.copy(pendingUp = false)
                 when (status) {
-                    Connection.VideoProvider.SESSION_MODIFY_REQUEST_REJECTED_BY_REMOTE -> _notices.tryEmit("Video request declined")
-                    Connection.VideoProvider.SESSION_MODIFY_REQUEST_TIMED_OUT -> _notices.tryEmit("No answer to the video request")
+                    Connection.VideoProvider.SESSION_MODIFY_REQUEST_REJECTED_BY_REMOTE -> Notices.show("Video request declined")
+                    Connection.VideoProvider.SESSION_MODIFY_REQUEST_TIMED_OUT -> Notices.show("No answer to the video request")
                     Connection.VideoProvider.SESSION_MODIFY_REQUEST_FAIL,
-                    Connection.VideoProvider.SESSION_MODIFY_REQUEST_INVALID -> _notices.tryEmit("Couldn't switch to video")
+                    Connection.VideoProvider.SESSION_MODIFY_REQUEST_INVALID -> Notices.show("Couldn't switch to video")
                 }
             }
             override fun onCallSessionEvent(event: Int) {}
@@ -389,7 +393,7 @@ object CallManager {
             }
         }
         videoCbs[id] = cb
-        try { vc.registerCallback(cb) } catch (e: Exception) { videoCbs.remove(id) }
+        try { vc.registerCallback(cb) } catch (e: Exception) { Diag.fail("video_register", e); videoCbs.remove(id) }
     }
 
     /** Keeps the camera attached only while we are sending video, the call is active and the call screen is on screen. */
@@ -423,7 +427,7 @@ object CallManager {
         val toFront = !v.front
         val ctx = appCtx
         if (ctx != null && cameraId(ctx, toFront) == null) {
-            _notices.tryEmit(if (toFront) "No front camera found" else "No rear camera found")
+            Notices.show(if (toFront) "No front camera found" else "No rear camera found")
             return
         }
         _video.value = v.copy(front = toFront, switching = true)
@@ -442,7 +446,7 @@ object CallManager {
         if (on && _video.value.pendingUp) { Diag.log("video_request_ignored", id, "already_pending"); return }
         Diag.log(if (on) "video_request_out" else "video_to_voice", id)
         if (on) {
-            videoReqAt[id] = android.os.SystemClock.elapsedRealtime()
+            videoReqAt[id] = SystemClock.elapsedRealtime()
             _video.value = _video.value.copy(pendingUp = true)
             main.postDelayed({ _video.value = _video.value.copy(pendingUp = false) }, 45_000) // safety net if no response ever arrives
         }
@@ -506,24 +510,20 @@ object CallManager {
 
     fun selectSim(id: Int, h: PhoneAccountHandle) { refs[id]?.phoneAccountSelected(h, false) }
 
-    @Suppress("DEPRECATION")
     fun setMuted(m: Boolean) { service?.get()?.setMuted(m) }
 
-    @Suppress("DEPRECATION")
+    @Suppress("DEPRECATION") // setAudioRoute: see AudioUi
     fun setRoute(route: Int) { service?.get()?.setAudioRoute(route) }
 
-    // Lint flags MODIFY_PHONE_STATE (a system-only permission). Telecom also accepts the default dialer
-    // for silenceRinger, so this works at runtime when we hold the role; SecurityException is caught otherwise.
+    // Lint wants MODIFY_PHONE_STATE, a system-only permission; the default dialer role is what Telecom accepts instead.
     @SuppressLint("MissingPermission")
     fun silence(ctx: Context) {
-        try { ctx.getSystemService(TelecomManager::class.java)?.silenceRinger() } catch (_: SecurityException) { }
+        if (!roleHeld(ctx)) { Diag.log("silence_denied", detail = "not the default dialer"); return }
+        ctx.getSystemService(TelecomManager::class.java)?.silenceRinger()
     }
 }
 
 class DialerInCallService : InCallService() {
-    private var boundAt = 0L
-    fun sinceBind(): Long = if (boundAt == 0L) -1 else SystemClock.elapsedRealtime() - boundAt
-
     override fun onCreate() {
         super.onCreate()
         Core.init(this)
@@ -533,7 +533,6 @@ class DialerInCallService : InCallService() {
     }
 
     override fun onBind(intent: Intent?): IBinder? {
-        boundAt = SystemClock.elapsedRealtime()
         Diag.log("service_bound")
         return super.onBind(intent)
     }
@@ -548,9 +547,9 @@ class DialerInCallService : InCallService() {
         CallManager.onRemoved(call)
     }
 
-    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION") // see AudioUi
     override fun onCallAudioStateChanged(audioState: CallAudioState?) {
-        CallManager.setAudio(audioState)
+        CallManager.setAudio(AudioUi.of(this, audioState))
     }
 
     override fun onBringToForeground(showDialpad: Boolean) {
@@ -679,6 +678,7 @@ object CallNotifications {
 
     private fun subtitle(c: CallInfo) = if (c.name != null) pretty(c.number) else null
 
+    // Full-screen intents are permitted for calling apps; the USE_FULL_SCREEN_INTENT grant is surfaced in Onboarding/Settings.
     @SuppressLint("FullScreenIntentPolicy")
     private fun postIncoming(ctx: Context, nm: NotificationManager, c: CallInfo) {
         val isQuiet = quiet.getOrPut(c.id) {
@@ -741,7 +741,7 @@ object CallNotifications {
             .build()
         if (useFg && svc != null) {
             try {
-                ServiceCompat.startForeground(svc, ID_ONGOING, build(true), if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL else 0)
+                ServiceCompat.startForeground(svc, ID_ONGOING, build(true), ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
                 fgOn = true
                 lastOngoing = key
                 return
@@ -756,8 +756,8 @@ object CallNotifications {
         } catch (e: IllegalArgumentException) {
             ongoingCallStyle = false
             Diag.log("notif_fallback", c.id, "kind=ongoing plain")
-            try { nm.notify(ID_ONGOING, build(false)); lastOngoing = key } catch (_: Exception) { }
-        } catch (e: SecurityException) { }
+            try { nm.notify(ID_ONGOING, build(false)); lastOngoing = key } catch (e: Exception) { Diag.fail("ongoing_notify", e) }
+        } catch (e: SecurityException) { Diag.fail("ongoing_notify", e) }
     }
 }
 
@@ -791,14 +791,12 @@ fun endText(code: Int): String = when (code) {
 class UnknownCallerScreeningService : CallScreeningService() {
     override fun onScreenCall(details: Call.Details) {
         Core.init(this)
-        val incoming = Build.VERSION.SDK_INT < 29 || details.callDirection == Call.Details.DIRECTION_INCOMING
+        val incoming = details.callDirection == Call.Details.DIRECTION_INCOMING
         var silence = false
-        if (incoming && Prefs.silenceUnknown.value && granted(android.Manifest.permission.READ_CONTACTS)) {
+        if (incoming && Prefs.silenceUnknown.value && granted(Manifest.permission.READ_CONTACTS)) {
             val number = details.handle?.schemeSpecificPart
             silence = number.isNullOrBlank() || ContactsRepo.lookup(this, number) == null
         }
-        val response = CallResponse.Builder()
-        if (Build.VERSION.SDK_INT >= 29) response.setSilenceCall(silence) // Android 9 cannot silence, so unknown callers just ring there
-        respondToCall(details, response.build())
+        respondToCall(details, CallResponse.Builder().setSilenceCall(silence).build())
     }
 }

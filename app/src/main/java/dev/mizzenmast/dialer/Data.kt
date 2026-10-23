@@ -21,8 +21,15 @@ import java.util.Locale
 
 fun Context.granted(p: String) = ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
 
+/** Needed to place calls and to know which SIM to offer. */
+val PHONE_PERMS = arrayOf(android.Manifest.permission.CALL_PHONE, android.Manifest.permission.READ_PHONE_STATE)
+
 data class ContactPhone(val number: String, val label: String)
-data class Contact(val id: Long, val lookupKey: String?, val name: String, val photo: String?, val phones: List<ContactPhone>, val starred: Boolean = false)
+/** [savedIn] is where the contact is stored: a Google account's email, "Phone", or a SIM (see [ContactsRepo.sourceLabel]). */
+data class Contact(
+    val id: Long, val lookupKey: String?, val name: String, val photo: String?, val phones: List<ContactPhone>,
+    val starred: Boolean = false, val savedIn: Set<String> = emptySet()
+)
 data class Found(val name: String?, val photo: String?)
 data class LogEntry(
     val id: Long, val number: String, val name: String?, val type: Int,
@@ -37,10 +44,18 @@ data class LogEntry(
 object SimLabels {
     private val cache = HashMap<String, String?>()
 
-    @android.annotation.SuppressLint("MissingPermission")
-    fun multiSim(ctx: Context): Boolean = try {
-        (ctx.getSystemService(TelecomManager::class.java)?.callCapablePhoneAccounts?.size ?: 0) > 1
-    } catch (e: Exception) { false }
+    /** Call-capable accounts; empty (not an error) when READ_PHONE_STATE is not granted. */
+    fun accounts(ctx: Context): List<android.telecom.PhoneAccountHandle> {
+        if (ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return emptyList()
+        return ctx.getSystemService(TelecomManager::class.java)?.callCapablePhoneAccounts.orEmpty()
+    }
+
+    fun multiSim(ctx: Context): Boolean = accounts(ctx).size > 1
+
+    /** False when there is no default SIM for calls, or when READ_PHONE_STATE is not granted (can't tell). */
+    fun hasDefaultAccount(ctx: Context): Boolean {
+        return ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED && ctx.getSystemService(TelecomManager::class.java)?.getDefaultOutgoingPhoneAccount("tel") != null
+    }
 
     @Synchronized
     fun label(ctx: Context, h: android.telecom.PhoneAccountHandle?): String? {
@@ -48,18 +63,18 @@ object SimLabels {
         val key = h.componentName.flattenToString() + "/" + h.id
         if (cache.containsKey(key)) return cache[key]
         val l = try { ctx.getSystemService(TelecomManager::class.java)?.getPhoneAccount(h)?.label?.toString()?.takeIf { it.isNotBlank() } }
-        catch (e: Exception) { null }
+        catch (e: Exception) { Diag.fail("sim_label", e); null }
         cache[key] = l
         return l
     }
 
     private val slotCache = HashMap<String, Int?>()
 
-    /** 1-based physical SIM slot for a call account, or null when it can't be determined (API < 30, no permission, SIM removed). */
+    /** 1-based physical SIM slot for a call account, or null when it can't be determined (no permission, SIM removed). */
     @Synchronized
-    @android.annotation.SuppressLint("MissingPermission")
     fun slot(ctx: Context, component: String?, id: String?): Int? {
-        if (android.os.Build.VERSION.SDK_INT < 30 || component.isNullOrBlank() || id == null) return null
+        if (component.isNullOrBlank() || id == null) return null
+        if (ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return null
         val key = "$component/$id"
         if (slotCache.containsKey(key)) return slotCache[key]
         val slot = try {
@@ -67,7 +82,7 @@ object SimLabels {
             val subId = cn?.let { ctx.getSystemService(android.telephony.TelephonyManager::class.java)?.getSubscriptionId(android.telecom.PhoneAccountHandle(it, id)) }
             if (subId == null || subId < 0) null
             else ctx.getSystemService(android.telephony.SubscriptionManager::class.java)?.getActiveSubscriptionInfo(subId)?.simSlotIndex?.takeIf { it >= 0 }?.plus(1)
-        } catch (e: Exception) { null }
+        } catch (e: Exception) { Diag.fail("sim_slot", e); null }
         // A null caused by a missing permission shouldn't stick once it's granted, so only cache hits.
         if (slot != null) slotCache[key] = slot
         return slot
@@ -89,7 +104,7 @@ sealed interface Load<out T> {
 
 fun pretty(number: String?): String? {
     if (number.isNullOrBlank()) return null
-    return try { PhoneNumberUtils.formatNumber(number, Locale.getDefault().country) ?: number } catch (e: Exception) { number }
+    return try { PhoneNumberUtils.formatNumber(number, Locale.getDefault().country) ?: number } catch (e: Exception) { Diag.fail("format_number", e); number }
 }
 
 fun CallInfo.title(): String = when {
@@ -127,7 +142,7 @@ private fun changes(ctx: Context, uri: Uri): Flow<Unit> = callbackFlow {
     val o = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) { trySend(Unit) }
     }
-    try { ctx.contentResolver.registerContentObserver(uri, true, o) } catch (_: SecurityException) { }
+    try { ctx.contentResolver.registerContentObserver(uri, true, o) } catch (e: SecurityException) { Diag.fail("observer", e) }
     trySend(Unit)
     awaitClose { ctx.contentResolver.unregisterContentObserver(o) }
 }
@@ -153,14 +168,35 @@ object ContactsRepo {
                 }
             }
         }
-        return out.values.toList()
+        val saved = savedIn(ctx)
+        return out.values.map { it.copy(savedIn = saved[it.id].orEmpty()) }
+    }
+
+    /** Account names differ per phone maker, so this goes by what the account type says and falls back to the account's own name. */
+    fun sourceLabel(type: String?, name: String?): String = when {
+        type == "com.google" -> name?.takeIf { it.isNotBlank() } ?: "Google"
+        type?.contains("sim", ignoreCase = true) == true -> name?.takeIf { it.contains("sim", ignoreCase = true) } ?: "SIM"
+        type.isNullOrBlank() || listOf("local", "device", "phone").any { type.contains(it, ignoreCase = true) } -> "Phone"
+        else -> name?.takeIf { it.isNotBlank() } ?: type
+    }
+
+    /** Contact id to the places it is stored. A joined contact can live in several accounts. Failure only means no source filters. */
+    private fun savedIn(ctx: Context): Map<Long, Set<String>> {
+        val out = HashMap<Long, MutableSet<String>>()
+        try {
+            val cols = arrayOf(ContactsContract.RawContacts.CONTACT_ID, ContactsContract.RawContacts.ACCOUNT_TYPE, ContactsContract.RawContacts.ACCOUNT_NAME)
+            ctx.contentResolver.query(ContactsContract.RawContacts.CONTENT_URI, cols, "${ContactsContract.RawContacts.DELETED} = 0", null, null)?.use { c ->
+                while (c.moveToNext()) out.getOrPut(c.getLong(0)) { HashSet() }.add(sourceLabel(c.getString(1), c.getString(2)))
+            }
+        } catch (e: Exception) { Diag.fail("contact_sources", e) }
+        return out
     }
 
     /** Blocking; call from IO. Needs WRITE_CONTACTS. Returns false if nothing was updated. */
     fun setStarred(ctx: Context, contactId: Long, starred: Boolean): Boolean = try {
         val v = android.content.ContentValues().apply { put(ContactsContract.Contacts.STARRED, if (starred) 1 else 0) }
         ctx.contentResolver.update(Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contactId.toString()), v, null, null) > 0
-    } catch (e: Exception) { false }
+    } catch (e: Exception) { Diag.fail("set_starred", e); false }
 
     /** Fast single-number lookup for incoming calls. Blocking; call from IO. Returns null if unavailable. */
     fun lookup(ctx: Context, number: String): Found? {
@@ -171,7 +207,7 @@ object ContactsRepo {
                 uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME, ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI),
                 null, null, null
             )?.use { c -> if (c.moveToFirst()) Found(c.getString(0), c.getString(1)) else null }
-        } catch (e: Exception) { null }
+        } catch (e: Exception) { Diag.fail("contact_lookup", e); null }
     }
 }
 
@@ -213,7 +249,7 @@ object CallLogRepo {
     fun clear(ctx: Context): Boolean = try {
         ctx.contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
         true
-    } catch (e: SecurityException) { false }
+    } catch (e: SecurityException) { Diag.fail("clear_call_log", e); false }
 
     /** Returns how many rows were removed. */
     fun delete(ctx: Context, ids: Collection<Long>): Int = try {
@@ -221,21 +257,21 @@ object CallLogRepo {
             ctx.contentResolver.delete(CallLog.Calls.CONTENT_URI,
                 "${CallLog.Calls._ID} IN (${chunk.joinToString(",") { "?" }})", chunk.map { it.toString() }.toTypedArray())
         }
-    } catch (e: SecurityException) { 0 }
+    } catch (e: SecurityException) { Diag.fail("delete_call_log", e); 0 }
 }
 
 /** System block list. Writing needs the default-dialer role; Telecom itself rejects calls from these numbers before they ring. Blocking; call from IO. */
 object BlockedRepo {
-    fun canBlock(ctx: Context): Boolean = try { android.provider.BlockedNumberContract.canCurrentUserBlockNumbers(ctx) } catch (e: Exception) { false }
+    fun canBlock(ctx: Context): Boolean = try { android.provider.BlockedNumberContract.canCurrentUserBlockNumbers(ctx) } catch (e: Exception) { Diag.fail("can_block", e); false }
 
-    fun isBlocked(ctx: Context, number: String): Boolean = try { android.provider.BlockedNumberContract.isBlocked(ctx, number) } catch (e: Exception) { false }
+    fun isBlocked(ctx: Context, number: String): Boolean = try { android.provider.BlockedNumberContract.isBlocked(ctx, number) } catch (e: Exception) { Diag.fail("is_blocked", e); false }
 
     fun block(ctx: Context, number: String): Boolean = try {
         val v = android.content.ContentValues().apply { put(android.provider.BlockedNumberContract.BlockedNumbers.COLUMN_ORIGINAL_NUMBER, number) }
         ctx.contentResolver.insert(android.provider.BlockedNumberContract.BlockedNumbers.CONTENT_URI, v) != null
-    } catch (e: Exception) { false }
+    } catch (e: Exception) { Diag.fail("block_number", e); false }
 
     fun unblock(ctx: Context, number: String): Boolean = try {
         android.provider.BlockedNumberContract.unblock(ctx, number) > 0
-    } catch (e: Exception) { false }
+    } catch (e: Exception) { Diag.fail("unblock", e); false }
 }

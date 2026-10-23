@@ -15,7 +15,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,14 +23,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Call
@@ -54,8 +51,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -65,7 +60,7 @@ class Setup(
     val isDefault: Boolean, val contacts: Boolean, val callLog: Boolean, val phone: Boolean,
     val notif: Boolean, val fsi: Boolean, val overlay: Boolean, val battery: Boolean
 ) {
-    /** The parts the app can't do its job without. Overlay and battery are optional. */
+    /** The parts the app can't do its job without; until they are all granted only setup is shown. Overlay and battery are optional and live in Settings. */
     val essentials: Boolean get() = isDefault && contacts && callLog && phone && notif && fsi
 }
 
@@ -73,7 +68,7 @@ fun readSetup(ctx: Context) = Setup(
     isDefault = roleHeld(ctx),
     contacts = ctx.granted(Manifest.permission.READ_CONTACTS),
     callLog = ctx.granted(Manifest.permission.READ_CALL_LOG) && ctx.granted(Manifest.permission.WRITE_CALL_LOG),
-    phone = ctx.granted(Manifest.permission.CALL_PHONE),
+    phone = PHONE_PERMS.all { ctx.granted(it) },
     notif = Build.VERSION.SDK_INT < 33 || ctx.granted(Manifest.permission.POST_NOTIFICATIONS),
     fsi = Build.VERSION.SDK_INT < 34 || ctx.getSystemService(NotificationManager::class.java).canUseFullScreenIntent(),
     overlay = Settings.canDrawOverlays(ctx),
@@ -83,7 +78,7 @@ fun readSetup(ctx: Context) = Setup(
 private class Req(val title: String, val sub: String?, val ok: Boolean, val action: String? = null, val onClick: () -> Unit = {})
 
 /**
- * One onboarding page. When [needed], the primary button runs [action] instead of moving on; [skip] always remains available.
+ * One setup page. When [needed], the primary button runs [action] and there is no way past the page.
  * [fallback] replaces the action after one attempt that didn't help (Android stops showing a permission dialog once it was denied twice).
  */
 private class Page(
@@ -93,16 +88,17 @@ private class Page(
 )
 
 @Composable
-fun OnboardingScreen(vm: DialerViewModel, actions: Actions, onDone: () -> Unit) {
+fun OnboardingScreen(vm: DialerViewModel, actions: Actions) {
     val c = LocalColors.current
     val ctx = LocalContext.current
     val tick by vm.tick.collectAsState()
     val s = remember(tick) { readSetup(ctx) }
-    var step by rememberSaveable { mutableIntStateOf(0) }
+    // Someone who already granted things (and lost one later) doesn't need the welcome page again.
+    var step by rememberSaveable { mutableIntStateOf(if (s.isDefault || s.contacts) 1 else 0) }
     var tried by rememberSaveable(step) { mutableStateOf(false) }
 
     val pages = listOf(
-        Page(Icons.Rounded.Phone, "Welcome", "Let's get your phone app ready. It takes about a minute, and you can change all of it later in Settings. Everything stays on your phone."),
+        Page(Icons.Rounded.Phone, "Welcome", "Let's get your phone app ready. Everything on the next pages is needed for calls to work, and it all stays on your phone."),
         Page(
             Icons.Rounded.Call, "Make it your phone app",
             "Android only sends incoming calls to the default phone app. Without this, calls won't show up here.",
@@ -122,19 +118,23 @@ fun OnboardingScreen(vm: DialerViewModel, actions: Actions, onDone: () -> Unit) 
         ),
         Page(
             Icons.Rounded.Notifications, "Never miss a call",
-            "Notifications and full-screen alerts let a call take over the lock screen. The last two are optional, but help on phones that close background apps aggressively.",
+            "Notifications and full-screen alerts let a call take over the lock screen.",
             reqs = buildList {
                 add(Req("Notifications", if (s.notif) null else "Call alerts", s.notif, "Allow", actions.requestNotifications))
                 if (Build.VERSION.SDK_INT >= 34) add(Req("Full-screen alerts", if (s.fsi) null else "Show calls over the lock screen", s.fsi, "Open") { actions.open(SettingsTarget.FullScreen) })
-                add(Req("Display over other apps", if (s.overlay) null else "Optional", s.overlay, "Open") { actions.open(SettingsTarget.Overlay) })
-                add(Req("Unrestricted battery", if (s.battery) null else "Optional", s.battery, "Open") { actions.open(SettingsTarget.Battery) })
-            }
+            },
+            needed = !(s.notif && s.fsi),
+            action = if (!s.notif) "Allow notifications" else "Open full-screen settings",
+            onAction = { if (!s.notif) actions.requestNotifications() else actions.open(SettingsTarget.FullScreen) },
+            fallback = "Open notification settings",
+            onFallback = { actions.open(if (!s.notif) SettingsTarget.Notifications else SettingsTarget.FullScreen) }
         )
     )
     val page = pages[step.coerceIn(0, pages.lastIndex)]
     val last = step >= pages.lastIndex
     val blocked = page.needed && page.action != null
-    fun next() { if (last) onDone() else step++ }
+    // After the last page, go back to whatever is still missing (setup closes by itself once everything is granted).
+    fun next() { if (last) step = pages.indexOfFirst { it.needed }.coerceAtLeast(0) else step++ }
 
     BackHandler(enabled = step > 0) { step-- }
 
@@ -166,17 +166,10 @@ fun OnboardingScreen(vm: DialerViewModel, actions: Actions, onDone: () -> Unit) 
 
         Dots(count = pages.size, selected = step)
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) {
-                if (blocked) Text(
-                    "Skip", color = c.inkDim, fontSize = 15.sp, fontWeight = FontWeight.Medium,
-                    modifier = Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(24.dp)).clickable(role = Role.Button) { next() }
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                )
-            }
+            Spacer(Modifier.weight(1f))
             val label = when {
                 blocked && tried && page.fallback != null -> page.fallback
                 blocked -> page.action
-                last -> "Finish"
                 step == 0 -> "Get started"
                 else -> "Continue"
             }

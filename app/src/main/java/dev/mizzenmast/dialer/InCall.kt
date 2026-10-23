@@ -1,4 +1,3 @@
-@file:Suppress("DEPRECATION")
 
 package dev.mizzenmast.dialer
 
@@ -12,7 +11,6 @@ import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.view.Surface
 import android.view.TextureView
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.aspectRatio
@@ -31,7 +29,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.PowerManager
 import android.telecom.Call
-import android.telecom.CallAudioState
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -57,7 +54,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.CallEnd
-import androidx.compose.material.icons.rounded.CallMerge
+import androidx.compose.material.icons.automirrored.rounded.CallMerge
 import androidx.compose.material.icons.rounded.Dialpad
 import androidx.compose.material.icons.rounded.Headset
 import androidx.compose.material.icons.rounded.Mic
@@ -69,7 +66,7 @@ import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PhoneInTalk
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SwapCalls
-import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -111,8 +108,6 @@ class InCallActivity : ComponentActivity() {
         val cid = CallManager.currentCallId()
         Diag.log("activity_created", cid, "recreated=${savedInstanceState != null}")
 
-        // Lock-screen presentation via documented APIs (manifest attrs cover API 27+, this covers older + is explicit)
-        setShowWhenLocked(true); setTurnScreenOn(true)
         enableEdgeToEdge()
 
         setContent {
@@ -122,13 +117,10 @@ class InCallActivity : ComponentActivity() {
         Diag.log("content_set", cid)
         if (savedInstanceState == null) consumeIntent(intent)
 
-        lifecycleScope.launch {
-            CallManager.notices.collect { Toast.makeText(this@InCallActivity, it, Toast.LENGTH_SHORT).show() }
-        }
         // Keep the PiP window's shape and auto-enter flag in step with the call.
         lifecycleScope.launch {
             combine(CallManager.calls, CallManager.video) { l, v -> l to v }.collect {
-                if (canPip()) try { setPictureInPictureParams(pipParams()) } catch (_: Exception) { }
+                if (canPip()) try { setPictureInPictureParams(pipParams()) } catch (e: Exception) { Diag.fail("pip_params", e) }
             }
         }
         lifecycleScope.launch {
@@ -152,7 +144,7 @@ class InCallActivity : ComponentActivity() {
 
     /** Shrinks the call into a floating window so video keeps flowing while you use other apps. */
     private fun enterPip() {
-        if (canPip() && videoCallActive()) try { enterPictureInPictureMode(pipParams()) } catch (_: Exception) { }
+        if (canPip() && videoCallActive()) try { enterPictureInPictureMode(pipParams()) } catch (e: Exception) { Diag.fail("enter_pip", e) }
     }
 
     // Android 12+ enters PiP by itself (auto-enter); older versions need this nudge when you press Home or swipe away.
@@ -191,10 +183,10 @@ class InCallActivity : ComponentActivity() {
         startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN_DIALER, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    private fun updateProximity(list: List<CallInfo>, audio: CallAudioState?) {
+    private fun updateProximity(list: List<CallInfo>, audio: AudioUi?) {
         val active = list.any { !it.isEnded && (it.state == Call.STATE_ACTIVE || it.state == Call.STATE_DIALING || it.state == Call.STATE_CONNECTING) }
         val videoOn = list.any { it.isVideo && !it.isEnded } // face is not at the ear during video
-        val need = active && !videoOn && audio?.route == CallAudioState.ROUTE_EARPIECE
+        val need = active && !videoOn && audio?.route == AudioUi.EARPIECE
         val pm = getSystemService(PowerManager::class.java)
         if (need) {
             if (proxLock == null && pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
@@ -204,10 +196,8 @@ class InCallActivity : ComponentActivity() {
     }
 
     /**
-     * Ringing and video always hold the screen on. For a normal call it depends on the "Power button ends call" accessibility setting:
-     * when it is on, a timed-out screen could only be woken by hanging up, so the screen stays on for the whole call. When it is off
-     * (most people) the system's screen timeout applies, like the stock dialer, and a long speaker call stops lighting the display.
-     * The proximity lock still handles the ear either way. If the setting can't be read we assume it is on (the safe side).
+     * Ringing and video always keep the screen on. Otherwise, only when "Power button ends call" is on (a timed-out screen could
+     * then only be woken by hanging up), which is also assumed when the setting can't be read.
      */
     private fun updateKeepOn(list: List<CallInfo>) {
         val live = list.filter { !it.isEnded }
@@ -223,7 +213,7 @@ class InCallActivity : ComponentActivity() {
     /** Settings.Secure.INCALL_POWER_BUTTON_BEHAVIOR is hidden from the SDK; its key is "incall_power_button_behavior", 1 = screen off, 2 = hang up. */
     private fun powerButtonEndsCall(): Boolean = try {
         android.provider.Settings.Secure.getInt(contentResolver, "incall_power_button_behavior", 1) == 2
-    } catch (e: Exception) { true }
+    } catch (e: Exception) { Diag.fail("power_button_ends_call", e); true }
 
     private fun releaseProximity() {
         proxLock?.let { if (it.isHeld) it.release() }
@@ -238,7 +228,7 @@ class InCallActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        CallManager.setUiVisible(false) // really off screen (not PiP): release the camera
+        CallManager.setUiVisible(false) // screen really off (not PiP): release the camera
         Diag.log("activity_stopped", CallManager.currentCallId(), "pip=$inPip")
         super.onStop()
     }
@@ -267,6 +257,7 @@ fun InCallRoot(onAddCall: () -> Unit, inPip: Boolean = false, onMinimize: (() ->
             primary != null -> OngoingScreen(primary, top, calls, audio, onAddCall)
         }
         primary?.takeIf { it.videoRequest != 0 && !it.isEnded }?.let { VideoRequestDialog(it) }
+        NoticeHost(Modifier.align(Alignment.TopCenter).padding(top = 12.dp).then(if (showVideo) Modifier.statusBarsPadding() else Modifier))
     }
 }
 
@@ -356,7 +347,7 @@ private fun CtlButton(ctl: Ctl) {
 }
 
 @Composable
-private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInfo>, audio: CallAudioState?, onAddCall: () -> Unit) {
+private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInfo>, audio: AudioUi?, onAddCall: () -> Unit) {
     val c = LocalColors.current
     var keypad by rememberSaveable { mutableStateOf(false) }
     var routes by remember { mutableStateOf(false) }
@@ -370,7 +361,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
 
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val askVideo = rememberCameraGate { ok ->
-        if (ok) CallManager.requestVideo(call.id, true) else Toast.makeText(ctx, "Camera permission is needed for video", Toast.LENGTH_SHORT).show()
+        if (ok) CallManager.requestVideo(call.id, true) else Notices.show("Camera permission is needed for video")
     }
     val vui by CallManager.video.collectAsState()
     val others = top.filter { it.id != call.id && !it.isEnded }
@@ -442,27 +433,23 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                     typed += ch
                     CallManager.dtmf(call.id, ch)
                 }, modifier = Modifier)
-                // Stop tone shortly after each press (Telecom requires an explicit stop)
+                // Telecom needs an explicit stop after each tone
                 LaunchedEffect(typed) { if (typed.isNotEmpty()) { delay(140.milliseconds); CallManager.dtmfStop(call.id) } }
                 Spacer(Modifier.height(8.dp))
                 TextPill("Hide keypad", { keypad = false })
             }
             else -> {
-                val muted = audio?.isMuted == true
-                val route = audio?.route ?: CallAudioState.ROUTE_EARPIECE
-                val mask = audio?.supportedRouteMask ?: 0
-                val speaker = route == CallAudioState.ROUTE_SPEAKER
-                val multi = (mask and (CallAudioState.ROUTE_BLUETOOTH or CallAudioState.ROUTE_WIRED_HEADSET)) != 0
-                val btName: String? = remember(audio) {
-                    if (route == CallAudioState.ROUTE_BLUETOOTH) {
-                        try { audio?.activeBluetoothDevice?.name } catch (e: SecurityException) { null }
-                    } else null
-                }
+                val muted = audio?.muted == true
+                val route = audio?.route ?: AudioUi.EARPIECE
+                val mask = audio?.mask ?: 0
+                val speaker = route == AudioUi.SPEAKER
+                val multi = (mask and (AudioUi.BLUETOOTH or AudioUi.WIRED)) != 0
+                val btName = if (route == AudioUi.BLUETOOTH) audio?.btName else null
                 val (routeIcon, routeLabel) = when (route) {
-                    CallAudioState.ROUTE_SPEAKER -> Icons.Rounded.VolumeUp to "Speaker"
-                    CallAudioState.ROUTE_BLUETOOTH -> Icons.Rounded.Bluetooth to (btName?.takeIf { it.isNotBlank() }
+                    AudioUi.SPEAKER -> Icons.AutoMirrored.Rounded.VolumeUp to "Speaker"
+                    AudioUi.BLUETOOTH -> Icons.Rounded.Bluetooth to (btName?.takeIf { it.isNotBlank() }
                         ?.let { if (it.length > 11) it.take(10) + "…" else it } ?: "Bluetooth")
-                    CallAudioState.ROUTE_WIRED_HEADSET -> Icons.Rounded.Headset to "Headset"
+                    AudioUi.WIRED -> Icons.Rounded.Headset to "Headset"
                     else -> Icons.Rounded.PhoneInTalk to if (multi) "Audio" else "Speaker"
                 }
 
@@ -470,9 +457,9 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                 val controls = listOfNotNull(
                     Ctl(if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, "Mute", muted, live) { CallManager.setMuted(!muted) },
                     Ctl(Icons.Rounded.Dialpad, "Keypad", false, connected || call.state == Call.STATE_DIALING) { keypad = true },
-                    Ctl(routeIcon, routeLabel, speaker || route == CallAudioState.ROUTE_BLUETOOTH, live) {
+                    Ctl(routeIcon, routeLabel, speaker || route == AudioUi.BLUETOOTH, live) {
                         if (multi) routes = true
-                        else CallManager.setRoute(if (speaker) CallAudioState.ROUTE_EARPIECE else CallAudioState.ROUTE_SPEAKER)
+                        else CallManager.setRoute(if (speaker) AudioUi.EARPIECE else AudioUi.SPEAKER)
                     },
                     Ctl(if (call.state == Call.STATE_HOLDING) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
                         if (call.state == Call.STATE_HOLDING) "Resume" else "Hold", call.state == Call.STATE_HOLDING,
@@ -480,9 +467,18 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                     Ctl(Icons.Rounded.PersonAdd, "Add call", false, connected && others.isEmpty(), onAddCall),
                     if (call.canVideo && !call.isVideo) Ctl(Icons.Rounded.Videocam, if (vui.pendingUp) "Asking…" else "Video", vui.pendingUp, call.state == Call.STATE_ACTIVE && !vui.pendingUp) { askVideo() } else null,
                     when {
-                        call.canMerge && connected -> Ctl(Icons.Rounded.CallMerge, "Merge", false, true) { CallManager.merge(call.id) }
-                        heldOther != null && isActive -> Ctl(Icons.Rounded.SwapCalls, "Swap", false, true) { CallManager.swapTo(heldOther.id) }
-                        call.canSwap -> Ctl(Icons.Rounded.SwapCalls, "Swap", false, true) { CallManager.swapTo(call.id) }
+                        call.canMerge && connected -> Ctl(Icons.AutoMirrored.Rounded.CallMerge, "Merge",
+                            on = false,
+                            enabled = true
+                        ) { CallManager.merge(call.id) }
+                        heldOther != null && isActive -> Ctl(Icons.Rounded.SwapCalls, "Swap",
+                            on = false,
+                            enabled = true
+                        ) { CallManager.swapTo(heldOther.id) }
+                        call.canSwap -> Ctl(Icons.Rounded.SwapCalls, "Swap",
+                            on = false,
+                            enabled = true
+                        ) { CallManager.swapTo(call.id) }
                         else -> null
                     }
                 )
@@ -500,15 +496,15 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
     }
 
     if (routes) {
-        val mask = audio?.supportedRouteMask ?: 0
+        val mask = audio?.mask ?: 0
         val cur = audio?.route ?: 0
         Dialog(onDismissRequest = { routes = false }) {
             Column(Modifier.clip(RoundedCornerShape(24.dp)).background(c.surface).padding(vertical = 12.dp)) {
                 listOf(
-                    Triple(CallAudioState.ROUTE_EARPIECE, "Phone", Icons.Rounded.PhoneInTalk),
-                    Triple(CallAudioState.ROUTE_SPEAKER, "Speaker", Icons.Rounded.VolumeUp),
-                    Triple(CallAudioState.ROUTE_BLUETOOTH, "Bluetooth", Icons.Rounded.Bluetooth),
-                    Triple(CallAudioState.ROUTE_WIRED_HEADSET, "Wired headset", Icons.Rounded.Headset)
+                    Triple(AudioUi.EARPIECE, "Phone", Icons.Rounded.PhoneInTalk),
+                    Triple(AudioUi.SPEAKER, "Speaker", Icons.AutoMirrored.Rounded.VolumeUp),
+                    Triple(AudioUi.BLUETOOTH, "Bluetooth", Icons.Rounded.Bluetooth),
+                    Triple(AudioUi.WIRED, "Wired headset", Icons.Rounded.Headset)
                 ).filter { (mask and it.first) != 0 }.forEach { (r, label, icon) ->
                     Row(
                         Modifier.fillMaxWidth().clickable { CallManager.setRoute(r); routes = false }.padding(horizontal = 24.dp, vertical = 16.dp),
@@ -523,8 +519,6 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
         }
     }
 }
-
-// ---------- video ----------
 
 /** Runs [onResult] with true if the camera permission is (or just became) granted. */
 @Composable
@@ -573,7 +567,7 @@ private fun VideoSurface(modifier: Modifier, contentAspect: Float, fit: VideoFit
 
 /** Round icon with a plain-words label under it, so you can tell what a tap will do. Highlighted = the feature is currently engaged. */
 @Composable
-private fun VideoBtn(icon: ImageVector, label: String, on: Boolean = false, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+private fun VideoBtn(modifier: Modifier = Modifier, icon: ImageVector, label: String, on: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     val tick = rememberTick()
     Column(
         modifier.alpha(if (enabled) 1f else 0.38f).clip(RoundedCornerShape(16.dp)).clickable(enabled = enabled, role = Role.Button, onClickLabel = label) { tick(); onClick() }.padding(vertical = 4.dp),
@@ -596,15 +590,14 @@ private fun CallClock(connectedAt: Long) {
     Text(if (connectedAt > 0) fmtDur((now - connectedAt) / 1000) else "Connected", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
 }
 
-@Suppress("DEPRECATION")
 @Composable
-private fun VideoCallScreen(call: CallInfo, audio: CallAudioState?, inPip: Boolean, onMinimize: (() -> Unit)?) {
+private fun VideoCallScreen(call: CallInfo, audio: AudioUi?, inPip: Boolean, onMinimize: (() -> Unit)?) {
     val c = LocalColors.current
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val cfg = LocalConfiguration.current
     val ui by CallManager.video.collectAsState()
-    val speaker = audio?.route == CallAudioState.ROUTE_SPEAKER
-    val muted = audio?.isMuted == true
+    val speaker = audio?.route == AudioUi.SPEAKER
+    val muted = audio?.muted == true
     val remoteAspect = if (ui.peerW > 0 && ui.peerH > 0) ui.peerW.toFloat() / ui.peerH else 0f
     // Keep the last good size so a momentary 0x0 report doesn't snap the picture to a different shape.
     val lockedRemote = remember { mutableFloatStateOf(0f) }
@@ -613,7 +606,7 @@ private fun VideoCallScreen(call: CallInfo, audio: CallAudioState?, inPip: Boole
     val previewAspect = if (landscape) 1f / ui.previewAspect else ui.previewAspect // camera capabilities are reported portrait-first
 
     // Video calls start on the loudspeaker, like Google Phone.
-    LaunchedEffect(call.id) { if (audio?.route == CallAudioState.ROUTE_EARPIECE) CallManager.setRoute(CallAudioState.ROUTE_SPEAKER) }
+    LaunchedEffect(call.id) { if (audio?.route == AudioUi.EARPIECE) CallManager.setRoute(AudioUi.SPEAKER) }
     LaunchedEffect(call.id, cfg.orientation) {
         val rotation = (ctx as? android.app.Activity)?.windowManager?.defaultDisplay?.rotation ?: 0
         CallManager.setOrientation(call.id, rotation * 90)
@@ -659,16 +652,16 @@ private fun VideoCallScreen(call: CallInfo, audio: CallAudioState?, inPip: Boole
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Top) {
-                VideoBtn(if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (muted) "Unmute" else "Mute", muted, Modifier.weight(1f)) { CallManager.setMuted(!muted) }
+                VideoBtn(Modifier.weight(1f), if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (muted) "Unmute" else "Mute", muted) { CallManager.setMuted(!muted) }
                 if (call.sendingVideo) {
-                    VideoBtn(if (ui.camOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, if (ui.camOn) "Stop video" else "Start video", !ui.camOn, Modifier.weight(1f)) { CallManager.toggleCamera() }
+                    VideoBtn(Modifier.weight(1f), if (ui.camOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, if (ui.camOn) "Stop video" else "Start video", !ui.camOn ) { CallManager.toggleCamera() }
                     // Always present (dimmed when the camera is off or mid-swap) so the row never shifts around.
-                    VideoBtn(Icons.Rounded.Cameraswitch, if (ui.switching) "Switching…" else if (ui.front) "Rear camera" else "Front camera", false, Modifier.weight(1f), enabled = ui.camOn && !ui.switching) { CallManager.flipCamera() }
+                    VideoBtn(Modifier.weight(1f), Icons.Rounded.Cameraswitch, if (ui.switching) "Switching…" else if (ui.front) "Rear camera" else "Front camera", false , enabled = ui.camOn && !ui.switching) { CallManager.flipCamera() }
                 }
-                VideoBtn(Icons.Rounded.VolumeUp, if (speaker) "Speaker on" else "Speaker off", speaker, Modifier.weight(1f)) {
-                    CallManager.setRoute(if (speaker) CallAudioState.ROUTE_EARPIECE else CallAudioState.ROUTE_SPEAKER)
+                VideoBtn(Modifier.weight(1f), Icons.AutoMirrored.Rounded.VolumeUp, if (speaker) "Speaker on" else "Speaker off", speaker) {
+                    CallManager.setRoute(if (speaker) AudioUi.EARPIECE else AudioUi.SPEAKER)
                 }
-                VideoBtn(Icons.Rounded.PhoneInTalk, "Voice only", false, Modifier.weight(1f)) { CallManager.requestVideo(call.id, false) }
+                VideoBtn(Modifier.weight(1f), Icons.Rounded.PhoneInTalk, "Voice only", false) { CallManager.requestVideo(call.id, false) }
             }
             Spacer(Modifier.height(12.dp))
             Row(
