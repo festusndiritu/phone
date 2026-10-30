@@ -1,15 +1,5 @@
 package dev.mizzenmast.dialer
 
-import androidx.compose.material.icons.rounded.SimCard
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.Share
-import androidx.compose.runtime.produceState
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.layout.wrapContentWidth
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.border
 import android.app.role.RoleManager
 import android.content.Context
 import android.media.AudioManager
@@ -19,6 +9,7 @@ import android.telecom.PhoneAccountHandle
 import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -26,6 +17,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,8 +30,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -55,16 +49,18 @@ import androidx.compose.material.icons.automirrored.rounded.CallReceived
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
@@ -81,6 +77,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -90,6 +87,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -103,15 +101,12 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -230,17 +225,33 @@ fun dayLabel(ctx: Context, t: Long): String {
 @Composable
 private fun FavoritesRow(favs: List<Contact>, onCall: (Contact) -> Unit, onOpen: (Contact) -> Unit) {
     val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(
+        horizontal = 20.dp,
+        vertical = 4.dp
+    ), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         favs.forEach { f ->
             Column(
                 Modifier.width(60.dp).clip(RoundedCornerShape(12.dp))
-                    .combinedClickable(role = Role.Button, onClickLabel = "Call ${f.name}", onLongClickLabel = "Open contact", onLongClick = { onOpen(f) }, onClick = { onCall(f) })
+                    .combinedClickable(
+                        role = Role.Button,
+                        onClickLabel = "Call ${f.name}",
+                        onLongClickLabel = "Open contact",
+                        onLongClick = { onOpen(f) },
+                        onClick = { onCall(f) }
+                    )
                     .padding(vertical = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Avatar(f.name, f.photo, 52.dp)
                 Spacer(Modifier.height(4.dp))
-                Text(f.name.substringBefore(' '), color = c.inkDim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                Text(
+                    f.name.substringBefore(' '),
+                    color = c.inkDim,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
@@ -310,7 +321,11 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                 }
             }
         )
-        if (showFavorites && favorites.isNotEmpty() && !selecting && query.isBlank()) FavoritesRow(favorites, onCall = { actions.call(it.phones.first().number) }, onOpen = { vm.detailContact.value = it })
+        if (showFavorites && favorites.isNotEmpty() && !selecting && query.isBlank()) FavoritesRow(
+            favorites,
+            onCall = { actions.call(it.phones.first().number) },
+            onOpen = { vm.detailContact.value = it }
+        )
         when (val s = recents) {
             Load.Loading -> ListSkeleton()
             Load.Denied -> StateMessage(Icons.Rounded.History, "See your recent calls",
@@ -322,7 +337,12 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                 val m = s.data
                 if (shown.isEmpty()) {
                     if (query.isNotBlank()) StateMessage(Icons.Rounded.Search, "No matches")
-                    else StateMessage(Icons.AutoMirrored.Rounded.CallMissed, when (filter) { 1 -> "No missed calls"; 2 -> "No incoming calls"; 3 -> "No outgoing calls"; else -> "No calls" })
+                    else StateMessage(
+                        Icons.AutoMirrored.Rounded.CallMissed,
+                        when (filter) {
+                            1 -> "No missed calls"; 2 -> "No incoming calls"; 3 -> "No outgoing calls"; else -> "No calls"
+                        }
+                    )
                 } else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp)) {
                     itemsIndexed(
                         shown,
@@ -589,7 +609,7 @@ private fun SimPrefRow(numbers: List<String>, subject: String) {
     val ctx = LocalContext.current
     val sims = remember { SimLabels.accounts(ctx) }
     if (sims.size < 2 || numbers.isEmpty()) return
-    val rows by produceState(emptyList<SimRow>(), sims) { value = withContext(Dispatchers.IO) { simRows(ctx, sims) } }
+    val rows by produceState(emptyList(), sims) { value = withContext(Dispatchers.IO) { simRows(ctx, sims) } }
     var key by remember(numbers) { mutableStateOf(Prefs.simFor(numbers.first())) }
     var open by remember { mutableStateOf(false) }
     CardRow("Call from", Icons.Rounded.SimCard, value = rows.firstOrNull { it.key == key }?.title ?: "Default", chevron = true) { open = true }
@@ -845,7 +865,13 @@ fun ContactDetailScreen(vm: DialerViewModel, actions: Actions, ct: Contact) {
     val related = remember(all, ct) { contactEntries(all, ct) }
     val first = ct.phones.firstOrNull()?.number
     Overlay(onBack = { vm.detailContact.value = null }) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Spacer(Modifier.height(8.dp))
             Avatar(ct.name, ct.photo, 96.dp)
             Spacer(Modifier.height(16.dp))
@@ -855,7 +881,11 @@ fun ContactDetailScreen(vm: DialerViewModel, actions: Actions, ct: Contact) {
                     Modifier.size(40.dp).clip(CircleShape)
                         .clickable(role = Role.Button, onClickLabel = if (starred) "Remove favorite" else "Add favorite") { actions.toggleStar(ct, !starred) },
                     contentAlignment = Alignment.Center
-                ) { Icon(if (starred) Icons.Rounded.Star else Icons.Rounded.StarBorder, if (starred) "Favorite" else "Not a favorite", tint = if (starred) c.accent else c.inkDim) }
+                ) { Icon(
+                    if (starred) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                    if (starred) "Favorite" else "Not a favorite",
+                    tint = if (starred) c.accent else c.inkDim
+                ) }
             }
             Text("Saved contact", color = c.inkDim, fontSize = 15.sp)
             if (first != null) {
@@ -905,7 +935,7 @@ fun SimPickerSheet(vm: DialerViewModel, actions: Actions) {
     val pending by vm.simPicker.collectAsState()
     val p = pending ?: return
     val ctx = LocalContext.current
-    val rows by produceState(emptyList<SimRow>(), p) { value = withContext(Dispatchers.IO) { simRows(ctx, p.second.map { it.handle }) } }
+    val rows by produceState(emptyList(), p) { value = withContext(Dispatchers.IO) { simRows(ctx, p.second.map { it.handle }) } }
     if (rows.isEmpty()) return
     SimSheet(pretty(p.first) ?: p.first, rows, selected = null, withDefault = false, onPick = { k ->
         val sim = p.second.firstOrNull { SimLabels.key(it.handle) == k } ?: return@SimSheet
@@ -1003,9 +1033,9 @@ private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (Strin
         Keypad(key, onKey = { ch ->
             insert(ch)
             if (tones) gen?.startTone(toneFor(ch), 120)
-        }, onLongZero = { insert('+') }, modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp), spread = true)
-        Spacer(Modifier.height(14.dp))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 40.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        }, onLongZero = { insert('+') }, spread = true)
+        Spacer(Modifier.height(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(30.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(key), contentAlignment = Alignment.Center) {
                 // A typed number that isn't saved yet can be saved from here.
                 if (number.count { it.isDigit() } >= 3 && index.find(number) == null) Column(
@@ -1025,19 +1055,5 @@ private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (Strin
             }
             Spacer(Modifier.size(key)) // keeps the call button under the middle column
         }
-    }
-}
-
-@Composable
-fun StatusRow(title: String, sub: String?, ok: Boolean, action: String?, onAction: () -> Unit) {
-    val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(if (ok) c.answer else c.hold))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            if (sub != null) Text(sub, color = c.inkDim, fontSize = 13.sp)
-        }
-        if (!ok && action != null) TextPill(action, onAction)
     }
 }

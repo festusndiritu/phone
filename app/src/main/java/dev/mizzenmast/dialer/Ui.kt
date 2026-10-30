@@ -1,10 +1,5 @@
 package dev.mizzenmast.dialer
 
-import androidx.compose.material.icons.rounded.PersonAdd
-import androidx.compose.material.icons.rounded.Block
-import kotlinx.coroutines.launch
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.window.DialogProperties
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
@@ -55,6 +50,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronLeft
@@ -67,6 +63,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SimCard
@@ -83,6 +80,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,7 +99,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -115,8 +112,10 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -163,7 +162,7 @@ fun Avatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifie
     val hue = remember(name) { ((name?.hashCode() ?: 0).toLong().let { if (it < 0) -it else it } % 360).toFloat() }
     val tint = if (ini.isEmpty()) c.surfaceHigh else if (dark) Color.hsv(hue, 0.45f, 0.36f) else Color.hsv(hue, 0.22f, 0.93f)
     val ink = if (dark) Color.hsv(hue, 0.25f, 0.96f) else Color.hsv(hue, 0.65f, 0.34f)
-    // [green]: every initial circle in the accent hue (contact cards) instead of a per-name colour.
+    // [green]: every initial circle in the accent hue (contact cards) instead of a per-name color.
     val fill = if (green && ini.isNotEmpty()) (if (dark) lerp(c.surface, c.accent, 0.5f) else c.accent) else tint
     val letterInk = if (green && ini.isNotEmpty()) (if (dark) c.ink else c.onAccent) else ink
     Box(modifier.size(size).clip(CircleShape).background(fill), contentAlignment = Alignment.Center) {
@@ -219,18 +218,6 @@ fun SimTag(slot: Int, modifier: Modifier = Modifier) {
     val c = LocalColors.current
     Text("SIM $slot", color = c.inkDim, fontSize = 10.sp, fontWeight = FontWeight.Medium,
         modifier = modifier.clip(RoundedCornerShape(8.dp)).background(c.surfaceHigh).padding(horizontal = 6.dp, vertical = 2.dp))
-}
-
-/**
- * Monotone SIM-card glyph with the slot number drawn inside (res/drawable/ic_sim_1, ic_sim_2).
- * Deliberately not the accent colour: it's metadata, so it sits at the same ink as the rest of the row's secondary text.
- */
-@Composable
-fun SimIcon(slot: Int, modifier: Modifier = Modifier, size: Dp = 16.dp, tint: Color = LocalColors.current.inkDim) {
-    Icon(
-        painterResource(if (slot == 2) R.drawable.ic_sim_2 else R.drawable.ic_sim_1),
-        contentDescription = "SIM $slot", tint = tint, modifier = modifier.size(size)
-    )
 }
 
 /** Filter chip: filled with the accent when selected, a quiet outline when idle. */
@@ -412,7 +399,7 @@ fun Toggle(checked: Boolean, onChange: ((Boolean) -> Unit)?) {
     }
 }
 
-/** One-line messages for the user, drawn as a snackbar by [NoticeHost]. Safe to call from any thread; dropped when no screen is showing. */
+/** One-line messages for the user, drawn as a snack bar by [NoticeHost]. Safe to call from any thread; dropped when no screen is showing. */
 object Notices {
     private val _flow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 8)
     val flow: kotlinx.coroutines.flow.SharedFlow<String> = _flow
@@ -439,7 +426,7 @@ fun copyNumber(ctx: Context, number: String) {
     if (android.os.Build.VERSION.SDK_INT < 33) Notices.show("Number copied")
 }
 
-/** Blocks or unblocks [number]. Returns the blocked state afterwards; when it can't change, says why and returns [blocked] as it was. */
+/** Blocks or unblocks [number]. Returns the blocked state afterward; when it can't change, says why and returns [blocked] as it was. */
 suspend fun toggleBlocked(ctx: Context, number: String, blocked: Boolean): Boolean {
     val ok = withContext(Dispatchers.IO) {
         if (!BlockedRepo.canBlock(ctx)) null
@@ -564,23 +551,20 @@ fun BottomBar(selected: Int, onSelect: (Int) -> Unit, onDial: () -> Unit) {
 private val KEYS = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#")
 private val LETTERS = mapOf("2" to "ABC", "3" to "DEF", "4" to "GHI", "5" to "JKL", "6" to "MNO", "7" to "PQRS", "8" to "TUV", "9" to "WXYZ", "0" to "+")
 
-/** With [spread] the rows fill the width and the keys are spaced evenly across it (the dialer); otherwise they sit close together (in-call). */
+/** With [spread] the keys get a little more room between them (the dialer); otherwise they sit closer together (in-call). */
 @Composable
 fun Keypad(keySize: Dp, onKey: (Char) -> Unit, modifier: Modifier = Modifier, onLongZero: (() -> Unit)? = null, spread: Boolean = false) {
     val c = LocalColors.current
     Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         KEYS.chunked(3).forEach { row ->
-            Row(
-                if (spread) Modifier.fillMaxWidth() else Modifier,
-                horizontalArrangement = if (spread) Arrangement.SpaceBetween else Arrangement.spacedBy(22.dp)
-            ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(if (spread) 36.dp else 22.dp)) {
                 row.forEach { k ->
                     Column(
                         Modifier.size(keySize).clip(CircleShape).background(c.surfaceHigh)
                             .combinedClickable(onClick = { onKey(k[0]) }, onLongClick = if (k == "0") onLongZero else null),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
                     ) {
-                        Text(k, fontSize = 28.sp, color = c.ink)
+                        Text(k, fontSize = 28.sp, color = c.ink, modifier = if (k == "*") Modifier.offset(y = 6.dp) else Modifier)
                         LETTERS[k]?.let { Text(it, fontSize = 9.sp, letterSpacing = 1.5.sp, color = c.inkDim) }
                     }
                 }
@@ -601,7 +585,7 @@ fun SwipeDecision(key: Any, onAnswer: () -> Unit, onDecline: () -> Unit) {
         val thumb = 72.dp
         val travel = with(density) { ((maxWidth - thumb - 16.dp) / 2).toPx() }
         val frac = (offset / travel).coerceIn(-1f, 1f)
-        // Idle hint: two chevrons per side light up in sequence, travelling away from the thumb. They fade out as you drag.
+        // Idle hint: two chevrons per side light up in sequence, traveling away from the thumb. They fade out as you drag.
         val motion = rememberMotionEnabled()
         val wave = if (motion) rememberInfiniteTransition(label = "swipeHint")
             .animateFloat(0f, 1f, infiniteRepeatable(tween(1400, easing = LinearEasing)), label = "wave").value else 0.5f
