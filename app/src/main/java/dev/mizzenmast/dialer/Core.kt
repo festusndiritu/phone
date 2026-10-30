@@ -53,6 +53,8 @@ object Prefs {
     val replyViaWhatsApp = MutableStateFlow(false)
     /** Contacts filter, persisted: "all", "fav" or "src:<where it's saved>". */
     val contactFilter = MutableStateFlow("all")
+    /** True once the setup walkthrough has been finished. Everyone sees the walkthrough once; after that setup only returns if an essential is revoked. */
+    val onboarded = MutableStateFlow(false)
 
     @Synchronized
     fun init(dp: Context) {
@@ -70,11 +72,16 @@ object Prefs {
         vibrateOnAnswer.value = p.getBoolean("vibrate_on_answer", true)
         replyViaWhatsApp.value = p.getBoolean("reply_whatsapp", false)
         contactFilter.value = p.getString("contact_filter", "all") ?: "all"
+        onboarded.value = p.getBoolean("onboarded_v2", false)
     }
 
     fun setContactFilter(v: String) {
         contactFilter.value = v
         sp?.edit()?.putString("contact_filter", v)?.apply()
+    }
+    fun setOnboarded(v: Boolean) {
+        onboarded.value = v
+        sp?.edit()?.putBoolean("onboarded_v2", v)?.apply()
     }
     fun setTheme(v: Int) {
         theme.value = v

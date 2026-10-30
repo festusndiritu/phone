@@ -238,7 +238,11 @@ class MainActivity : ComponentActivity() {
 fun App(vm: DialerViewModel, actions: Actions) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val tick by vm.tick.collectAsState()
-    val ready = remember(tick) { readSetup(ctx).essentials }
+    val onboarded by Prefs.onboarded.collectAsState()
+    val essentials = remember(tick) { readSetup(ctx).essentials }
+    // Setup stays up until the walkthrough is finished (so the optional pages after the last permission still show),
+    // and comes back on its own if an essential is revoked later.
+    val ready = essentials && onboarded
     Box(Modifier.fillMaxSize()) {
         if (ready) MainShell(vm, actions) else OnboardingScreen(vm, actions)
         NoticeHost(
