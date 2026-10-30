@@ -1,7 +1,5 @@
 package dev.mizzenmast.dialer
 
-import android.os.Build
-import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -47,9 +45,9 @@ import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.RadioButtonChecked
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.SimCard
+import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.TouchApp
-import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Vibration
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -94,7 +92,7 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
 
     var troubleOpen by rememberSaveable { mutableStateOf(false) }
     var themeDialog by remember { mutableStateOf(false) }
-    // Everything essential is granted by the time Settings is reachable (see App); only the optional items are shown here.
+    // Everything essential is granted by the time Settings is reachable; only the optional items are shown here.
     val setup = remember(tick) { readSetup(ctx) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {

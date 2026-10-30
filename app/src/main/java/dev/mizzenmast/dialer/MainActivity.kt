@@ -210,7 +210,9 @@ class MainActivity : ComponentActivity() {
 
     private fun openContact(c: Contact) {
         val uri = ContactsContract.Contacts.getLookupUri(c.id, c.lookupKey)
-        try { startActivity(Intent(Intent.ACTION_VIEW, uri)) } catch (e: Exception) { Diag.fail("open_contact", e); Notices.show("No contacts app found") }
+        // ACTION_EDIT lands straight in the contacts app's editor; ACTION_VIEW only showed the contact and left the edit button to be found.
+        val i = Intent(Intent.ACTION_EDIT, uri).putExtra("finishActivityOnSaveCompleted", true)
+        try { startActivity(i) } catch (e: Exception) { Diag.fail("edit_contact", e); Notices.show("No contacts app found") }
     }
 
     private fun addContact(number: String) {
@@ -253,7 +255,7 @@ fun App(vm: DialerViewModel, actions: Actions) {
 }
 
 private const val TAB_COUNT = 3
-private const val TAB_SETTINGS = 2
+
 
 /**
  * The three bottom tabs live in a horizontal pager (swipe or tap). Detail screens (call info, history, contact) are overlays
@@ -298,17 +300,15 @@ private fun MainShell(vm: DialerViewModel, actions: Actions) {
                     else -> SettingsScreen(vm, actions)
                 }
             }
-            androidx.compose.animation.AnimatedVisibility(
-                visible = pager.targetPage != TAB_SETTINGS && !overlayOpen,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 20.dp),
-                enter = fadeIn() + scaleIn(initialScale = 0.8f), exit = fadeOut() + scaleOut(targetScale = 0.8f)
-            ) { DialerFab { vm.dialerOpen.value = true } }
-
+            // With fewer than 5 destinations the keypad opener is a floating button, not part of the bar.
+            if (BOTTOM_DESTINATIONS < 5 && pager.targetPage != 2 && !overlayOpen) {
+                DialerFab(Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 20.dp)) { vm.dialerOpen.value = true }
+            }
             detailLog?.let { CallDetailScreen(vm, actions, it, index.find(it.number)) }
             historyLog?.let { CallHistoryScreen(vm, it, index.find(it.number)) }
             detailContact?.let { ContactDetailScreen(vm, actions, it) }
         }
-        BottomBar(pager.targetPage) { vm.selectTab(it) }
+        BottomBar(pager.targetPage, onSelect = { vm.selectTab(it) }, onDial = { vm.dialerOpen.value = true })
     }
     if (dialerOpen) DialerSheet(vm, actions) { vm.dialerOpen.value = false }
     SimPickerSheet(vm, actions)

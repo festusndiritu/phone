@@ -24,9 +24,9 @@ class DialerColors(
 )
 
 val LightColors = DialerColors(
-    bg = Color(0xFFF5F3EE), surface = Color(0xFFFFFFFF), surfaceHigh = Color(0xFFEAE7DF),
-    ink = Color(0xFF16181A), inkDim = Color(0xFF666B70), line = Color(0xFFDDD9CF),
-    accent = Color(0xFF0F6B5C), onAccent = Color.White,
+    bg = Color(0xFFF2F0E8), surface = Color(0xFFFAF9F4), surfaceHigh = Color(0xFFE8E6DB),
+    ink = Color(0xFF16181A), inkDim = Color(0xFF666B70), line = Color(0xFFDAD7CB),
+    accent = Color(0xFF1E5B48), onAccent = Color.White,
     answer = Color(0xFF1B9A58), decline = Color(0xFFD93B3B), missed = Color(0xFFC62F2F), hold = Color(0xFFA86A12),
     outgoing = Color(0xFF2F6FDB)
 )

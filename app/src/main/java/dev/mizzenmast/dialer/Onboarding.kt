@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,8 +45,8 @@ import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
@@ -327,7 +326,7 @@ fun OnboardingScreen(vm: DialerViewModel, actions: Actions) {
                     val showFallback = tried && !spec.granted && spec.fallback != null
                     SetupPage(
                         top = { BackTop(::back) },
-                        primary = when { spec.granted -> "Continue"; showFallback -> spec.fallback!!; else -> spec.action },
+                        primary = when { spec.granted -> "Continue"; showFallback -> spec.fallback else -> spec.action },
                         primaryIcon = if (spec.granted) Icons.Rounded.ChevronRight else null,
                         onPrimary = {
                             when {

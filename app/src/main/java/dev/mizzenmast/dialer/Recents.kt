@@ -16,7 +16,7 @@ sealed interface RItem {
 }
 
 @Immutable
-data class RecentsModel(val items: List<RItem>, val anySim: Boolean, val logEmpty: Boolean)
+data class RecentsModel(val items: List<RItem>, val logEmpty: Boolean)
 
 /** Maps the payload of a [Load.Ready]; every other state passes through untouched. */
 fun <T, R> Load<T>.mapReady(f: (T) -> R): Load<R> = when (this) {
@@ -75,5 +75,5 @@ fun buildRecents(ctx: Context, list: List<LogEntry>, typeFilter: Int, index: Con
         cur.add(e)
     }
     flush()
-    return RecentsModel(out, anySim = list.any { it.simSlot != null }, logEmpty = list.isEmpty())
+    return RecentsModel(out, logEmpty = list.isEmpty())
 }

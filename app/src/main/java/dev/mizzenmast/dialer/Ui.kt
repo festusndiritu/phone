@@ -1,5 +1,10 @@
 package dev.mizzenmast.dialer
 
+import androidx.compose.material.icons.rounded.PersonAdd
+import androidx.compose.material.icons.rounded.Block
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.window.DialogProperties
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
@@ -104,6 +109,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -148,7 +154,7 @@ fun rememberTick(): () -> Unit {
 }
 
 @Composable
-fun Avatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifier) {
+fun Avatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifier, green: Boolean = false) {
     val c = LocalColors.current
     val ctx = LocalContext.current
     val bmp by produceState<Bitmap?>(null, photo) { value = if (photo != null) Photos.load(ctx, photo) else null }
@@ -157,12 +163,15 @@ fun Avatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifie
     val hue = remember(name) { ((name?.hashCode() ?: 0).toLong().let { if (it < 0) -it else it } % 360).toFloat() }
     val tint = if (ini.isEmpty()) c.surfaceHigh else if (dark) Color.hsv(hue, 0.45f, 0.36f) else Color.hsv(hue, 0.22f, 0.93f)
     val ink = if (dark) Color.hsv(hue, 0.25f, 0.96f) else Color.hsv(hue, 0.65f, 0.34f)
-    Box(modifier.size(size).clip(CircleShape).background(tint), contentAlignment = Alignment.Center) {
+    // [green]: every initial circle in the accent hue (contact cards) instead of a per-name colour.
+    val fill = if (green && ini.isNotEmpty()) (if (dark) lerp(c.surface, c.accent, 0.5f) else c.accent) else tint
+    val letterInk = if (green && ini.isNotEmpty()) (if (dark) c.ink else c.onAccent) else ink
+    Box(modifier.size(size).clip(CircleShape).background(fill), contentAlignment = Alignment.Center) {
         val b = bmp
         if (b != null) {
             Image(remember(b) { b.asImageBitmap() }, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         } else {
-            if (ini.isNotEmpty()) Text(ini, color = ink, fontSize = (size.value * 0.38f).sp, fontWeight = FontWeight.Medium)
+            if (ini.isNotEmpty()) Text(ini, color = letterInk, fontSize = (size.value * 0.38f).sp, fontWeight = FontWeight.Medium)
             else Icon(Icons.Rounded.Person, null, tint = c.inkDim, modifier = Modifier.size(size * 0.5f))
         }
     }
@@ -204,6 +213,14 @@ fun SimChip(label: String, modifier: Modifier = Modifier, compact: Boolean = fal
     }
 }
 
+/** "SIM 1" in a small pill: the trailing metadata of list rows. */
+@Composable
+fun SimTag(slot: Int, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    Text("SIM $slot", color = c.inkDim, fontSize = 10.sp, fontWeight = FontWeight.Medium,
+        modifier = modifier.clip(RoundedCornerShape(8.dp)).background(c.surfaceHigh).padding(horizontal = 6.dp, vertical = 2.dp))
+}
+
 /**
  * Monotone SIM-card glyph with the slot number drawn inside (res/drawable/ic_sim_1, ic_sim_2).
  * Deliberately not the accent colour: it's metadata, so it sits at the same ink as the rest of the row's secondary text.
@@ -216,24 +233,24 @@ fun SimIcon(slot: Int, modifier: Modifier = Modifier, size: Dp = 16.dp, tint: Co
     )
 }
 
-/** Quiet filter chip: small, outlined when idle, a soft fill when selected. Louder than nothing, quieter than [TextPill]. */
+/** Filter chip: filled with the accent when selected, a quiet outline when idle. */
 @Composable
 fun FilterChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val c = LocalColors.current
-    // The outer box keeps a 40dp touch target while the visible chip is only 30dp tall.
+    val shape = RoundedCornerShape(16.dp)
+    // The outer box keeps a 40dp touch target while the visible chip is only 32dp tall.
     Box(modifier.heightIn(min = 40.dp).selectable(selected, role = Role.Tab, onClick = onClick), contentAlignment = Alignment.Center) {
         Box(
-            Modifier.height(30.dp).clip(RoundedCornerShape(15.dp))
-                .then(if (selected) Modifier.background(c.surfaceHigh) else Modifier.border(1.dp, c.line, RoundedCornerShape(15.dp)))
-                .padding(horizontal = 14.dp),
+            Modifier.height(32.dp).clip(shape)
+                .then(if (selected) Modifier.background(c.accent) else Modifier.background(c.surface).border(1.dp, c.line, shape))
+                .padding(horizontal = 16.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text(text, color = if (selected) c.ink else c.inkDim, fontSize = 13.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+            Text(text, color = if (selected) c.onAccent else c.inkDim, fontSize = 13.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
         }
     }
 }
 
-/** Placeholder rows shown while a list loads: same geometry as a real row, so nothing jumps when the data arrives. */
 @Composable
 fun ListSkeleton(modifier: Modifier = Modifier, rows: Int = 9) {
     val c = LocalColors.current
@@ -422,27 +439,59 @@ fun copyNumber(ctx: Context, number: String) {
     if (android.os.Build.VERSION.SDK_INT < 33) Notices.show("Number copied")
 }
 
-/** Long-press menu for a phone number: copy it, or drop it into the dialer to edit before calling. */
+/** Blocks or unblocks [number]. Returns the blocked state afterwards; when it can't change, says why and returns [blocked] as it was. */
+suspend fun toggleBlocked(ctx: Context, number: String, blocked: Boolean): Boolean {
+    val ok = withContext(Dispatchers.IO) {
+        if (!BlockedRepo.canBlock(ctx)) null
+        else if (blocked) BlockedRepo.unblock(ctx, number) else BlockedRepo.block(ctx, number)
+    }
+    when (ok) {
+        null -> Notices.show("Set as default phone app to block numbers")
+        false -> Notices.show("Couldn't update block list")
+        true -> {}
+    }
+    return if (ok == true) !blocked else blocked
+}
+
+/** Long-press menu for a phone number: who it is, then edit, copy, block, and (for unsaved numbers) add contact. */
 @Composable
-fun NumberMenu(number: String, onEdit: () -> Unit, onDismiss: () -> Unit) {
+fun NumberMenu(number: String, name: String?, photo: String?, onEdit: () -> Unit, onAddContact: (() -> Unit)?, onDismiss: () -> Unit) {
     val c = LocalColors.current
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var blocked by remember(number) { mutableStateOf(false) }
+    LaunchedEffect(number) { blocked = withContext(Dispatchers.IO) { BlockedRepo.isBlocked(ctx, number) } }
     @Composable
     fun Item(icon: ImageVector, label: String, onClick: () -> Unit) {
         Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = c.ink, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(18.dp))
             Text(label, color = c.ink, fontSize = 16.sp)
         }
     }
-    Dialog(onDismissRequest = onDismiss) {
-        Column(Modifier.clip(RoundedCornerShape(24.dp)).background(c.surface).padding(vertical = 12.dp)) {
-            Text(pretty(number) ?: number, color = c.inkDim, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-            Item(Icons.Rounded.ContentCopy, "Copy number") {
-                copyNumber(ctx, number)
-                onDismiss()
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.clip(RoundedCornerShape(28.dp)).background(c.surface).padding(bottom = 8.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(name, photo, 44.dp)
+                    Spacer(Modifier.width(14.dp))
+                    Column {
+                        if (name != null) Text(name, color = c.ink, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(pretty(number) ?: number, color = c.inkDim, fontSize = 14.sp)
+                    }
+                }
+                Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
+                Item(Icons.Rounded.Edit, "Edit number") { onDismiss(); onEdit() }
+                Item(Icons.Rounded.ContentCopy, "Copy number") { copyNumber(ctx, number); onDismiss() }
+                Item(Icons.Rounded.Block, if (blocked) "Unblock number" else "Block number") {
+                    scope.launch { toggleBlocked(ctx, number, blocked); onDismiss() }
+                }
+                if (onAddContact != null) Item(Icons.Rounded.PersonAdd, "Add contact") { onDismiss(); onAddContact() }
             }
-            Item(Icons.Rounded.Edit, "Edit before call") { onDismiss(); onEdit() }
+            Box(
+                Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(c.surface).clickable(role = Role.Button, onClick = onDismiss),
+                contentAlignment = Alignment.Center
+            ) { Text("Cancel", color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.Medium) }
         }
     }
 }
@@ -466,6 +515,9 @@ fun ConfirmDialog(title: String, body: String?, confirm: String, onConfirm: () -
     }
 }
 
+/** Number of destinations in [BottomBar]. The raised keypad button only looks right in the middle of 5; below that it's a [DialerFab]. */
+const val BOTTOM_DESTINATIONS = 3
+
 @Composable
 fun DialerFab(modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = LocalColors.current
@@ -476,21 +528,32 @@ fun DialerFab(modifier: Modifier = Modifier, onClick: () -> Unit) {
     ) { Icon(Icons.Rounded.Dialpad, "Keypad", tint = c.onAccent, modifier = Modifier.size(28.dp)) }
 }
 
+/**
+ * The destinations. With 5 of them the keypad button sits raised in the middle slot (it isn't a destination itself);
+ * with fewer, the bar is just the tabs and the keypad opener is a [DialerFab] over the content.
+ */
 @Composable
-fun BottomBar(selected: Int, onSelect: (Int) -> Unit) {
+fun BottomBar(selected: Int, onSelect: (Int) -> Unit, onDial: () -> Unit) {
     val c = LocalColors.current
     val tabs = listOf(Icons.Rounded.History to "Recents", Icons.Rounded.Contacts to "Contacts", Icons.Rounded.Settings to "Settings")
+    val raisedMiddle = tabs.size >= 5
     Column(Modifier.fillMaxWidth().background(c.surface).navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(64.dp)) {
+        Row(Modifier.fillMaxWidth().height(if (raisedMiddle) 72.dp else 64.dp), verticalAlignment = Alignment.CenterVertically) {
             tabs.forEachIndexed { i, (icon, label) ->
+                if (raisedMiddle && i == tabs.size / 2) Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    Box(
+                        Modifier.offset(y = (-6).dp).size(56.dp).shadow(6.dp, CircleShape).clip(CircleShape).background(c.accent)
+                            .clickable(role = Role.Button, onClickLabel = "Open keypad", onClick = onDial),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Rounded.Dialpad, "Keypad", tint = c.onAccent, modifier = Modifier.size(26.dp)) }
+                }
                 val on = i == selected
                 Column(
                     Modifier.weight(1f).fillMaxHeight().selectable(on, role = Role.Tab, onClick = { onSelect(i) }),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
                 ) {
-                    Box(Modifier.width(24.dp).height(3.dp).clip(RoundedCornerShape(2.dp)).background(if (on) c.accent else Color.Transparent))
-                    Spacer(Modifier.height(6.dp))
                     Icon(icon, null, tint = if (on) c.accent else c.inkDim, modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.height(4.dp))
                     Text(label, color = if (on) c.accent else c.inkDim, fontSize = 11.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
                 }
             }
@@ -501,19 +564,23 @@ fun BottomBar(selected: Int, onSelect: (Int) -> Unit) {
 private val KEYS = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#")
 private val LETTERS = mapOf("2" to "ABC", "3" to "DEF", "4" to "GHI", "5" to "JKL", "6" to "MNO", "7" to "PQRS", "8" to "TUV", "9" to "WXYZ", "0" to "+")
 
+/** With [spread] the rows fill the width and the keys are spaced evenly across it (the dialer); otherwise they sit close together (in-call). */
 @Composable
-fun Keypad(keySize: Dp, onKey: (Char) -> Unit, modifier: Modifier = Modifier, onLongZero: (() -> Unit)? = null) {
+fun Keypad(keySize: Dp, onKey: (Char) -> Unit, modifier: Modifier = Modifier, onLongZero: (() -> Unit)? = null, spread: Boolean = false) {
     val c = LocalColors.current
     Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         KEYS.chunked(3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+            Row(
+                if (spread) Modifier.fillMaxWidth() else Modifier,
+                horizontalArrangement = if (spread) Arrangement.SpaceBetween else Arrangement.spacedBy(22.dp)
+            ) {
                 row.forEach { k ->
                     Column(
-                        Modifier.size(keySize).clip(CircleShape).background(c.surface)
+                        Modifier.size(keySize).clip(CircleShape).background(c.surfaceHigh)
                             .combinedClickable(onClick = { onKey(k[0]) }, onLongClick = if (k == "0") onLongZero else null),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
                     ) {
-                        Text(k, fontSize = 28.sp, fontWeight = FontWeight.Light, color = c.ink)
+                        Text(k, fontSize = 28.sp, color = c.ink)
                         LETTERS[k]?.let { Text(it, fontSize = 9.sp, letterSpacing = 1.5.sp, color = c.inkDim) }
                     }
                 }

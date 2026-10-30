@@ -17,17 +17,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -36,23 +35,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Contacts
-import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Sync
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -161,7 +156,7 @@ fun SearchField(
     val motion = rememberMotionEnabled()
     LaunchedEffect(Unit) { if (autoFocus) focus.requestFocus() }
     Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.surface).padding(start = 14.dp),
+        modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(c.surfaceHigh).padding(start = 18.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(Icons.Rounded.Search, null, tint = c.inkDim, modifier = Modifier.size(20.dp))
@@ -224,32 +219,44 @@ private fun ContactList(data: List<Contact>, scrollKey: Any, showRail: Boolean, 
         }
     }
 
+    val railOn = showRail && sections.size > 1
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), state = state) {
+        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 96.dp)) {
             sections.forEach { (letter, people) ->
                 stickyHeader(key = "h$letter") {
-                    Text(letter.toString(), color = c.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.fillMaxWidth().background(c.bg).padding(horizontal = 20.dp, vertical = 6.dp))
+                    Text(letter.toString(), color = c.accent, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.fillMaxWidth().background(c.bg).padding(start = 26.dp, end = 20.dp, top = 10.dp, bottom = 4.dp))
                 }
                 items(people, key = { it.id }) { ct ->
-                    Row(Modifier.fillMaxWidth().clickable { onOpen(ct) }.padding(start = 20.dp, end = 38.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Avatar(ct.name, ct.photo, 44.dp)
-                        Spacer(Modifier.width(14.dp))
+                    // One rounded card per contact: avatar, name over a phone line, a star for favorites, a chevron.
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 16.dp, end = if (railOn) 38.dp else 16.dp, top = 4.dp, bottom = 4.dp)
+                            .clip(RoundedCornerShape(22.dp)).background(c.surface)
+                            .clickable { onOpen(ct) }.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Avatar(ct.name, ct.photo, 52.dp, green = true)
+                        Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
+                            Text(ct.name, color = c.ink, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(3.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(ct.name, color = c.ink, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                                if (ct.starred) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(Icons.Rounded.Star, "Favorite", tint = c.accent, modifier = Modifier.size(14.dp))
-                                }
+                                Icon(Icons.Rounded.Call, null, tint = c.inkDim, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text((pretty(ct.phones.first().number) ?: ct.phones.first().number) + (if (ct.phones.size > 1) "  +${ct.phones.size - 1}" else ""),
+                                    color = c.inkDim, fontSize = 14.sp, maxLines = 1)
                             }
-                            Text((pretty(ct.phones.first().number) ?: ct.phones.first().number) + (if (ct.phones.size > 1) "  +${ct.phones.size - 1}" else ""), color = c.inkDim, fontSize = 13.sp, maxLines = 1)
                         }
+                        if (ct.starred) {
+                            Icon(Icons.Rounded.Star, "Favorite", tint = c.accent, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(12.dp))
+                        }
+                        Icon(Icons.Rounded.ChevronRight, null, tint = c.inkDim)
                     }
                 }
             }
         }
-        if (showRail && sections.size > 1) {
+        if (railOn) {
             AlphabetRail(letters, currentLetter, Modifier.align(Alignment.CenterEnd)) { l, animate ->
                 positions[l]?.let { p -> scope.launch { if (animate && motion) state.animateScrollToItem(p) else state.scrollToItem(p) } }
             }
