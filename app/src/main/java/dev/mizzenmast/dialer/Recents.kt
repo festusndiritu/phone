@@ -46,8 +46,13 @@ fun List<RItem>.matching(q: String): List<RItem> {
 }
 
 /** Day headers, with consecutive calls to the same number on the same day folded into one group. Pure: safe on any thread. */
-fun buildRecents(ctx: Context, list: List<LogEntry>, missedOnly: Boolean, index: ContactIndex): RecentsModel {
-    val src = if (missedOnly) list.filter { it.type == CallLog.Calls.MISSED_TYPE } else list
+fun buildRecents(ctx: Context, list: List<LogEntry>, typeFilter: Int, index: ContactIndex): RecentsModel {
+    val src = when (typeFilter) {
+        1 -> list.filter { it.type == CallLog.Calls.MISSED_TYPE }
+        2 -> list.filter { it.type == CallLog.Calls.INCOMING_TYPE }
+        3 -> list.filter { it.type == CallLog.Calls.OUTGOING_TYPE }
+        else -> list
+    }
     val out = ArrayList<RItem>(src.size + 8)
     var curDay = Long.MIN_VALUE
     var curKey = ""

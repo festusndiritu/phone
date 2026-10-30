@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -42,11 +43,16 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Contacts
+import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -93,42 +99,32 @@ private fun letterOf(name: String): Char {
 
 @Composable
 fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
+    val c = LocalColors.current
     val list by vm.filtered.collectAsState()
     val q by vm.query.collectAsState()
     val filter by vm.contactFilter.collectAsState()
-    val sims by vm.simNumbers.collectAsState()
     val savedIn by vm.savedIn.collectAsState()
-    // SIM chips only exist when the call log knows which slot calls used; storage chips only when contacts live in 2+ places
-    val simChips = sims.isNotEmpty()
-    val savedChips = savedIn.size > 1
-    val active = filter.let { f ->
-        when (f) {
-            is ContactFilter.Sim if !simChips -> ContactFilter.All
-            is ContactFilter.Saved if (!savedChips || f.label !in savedIn) -> ContactFilter.All
-            else -> f
-        }
-    }
-
+    val syncing by vm.syncing.collectAsState()
+    // Places only get a menu entry when contacts live in 2+ of them
+    val sourceItems = if (savedIn.size > 1) savedIn else emptyList()
+    val picked = filter
+    val active = if (picked is ContactFilter.Saved && picked.label !in sourceItems) ContactFilter.All else picked
     Column(Modifier.fillMaxSize()) {
-        ScreenTitle("Contacts")
+        ScreenTitle("Contacts", trailing = {
+            IconAction(Icons.Rounded.Sync, if (syncing) "Syncing contacts" else "Sync contacts", { vm.syncContacts() }, tint = if (syncing) c.inkDim else c.ink)
+        })
         SearchField(
             value = q,
-            onChange = { vm.query.value = it }
+            onChange = { vm.query.value = it },
+            trailing = {
+                FilterButton(active != ContactFilter.All, "Filter contacts") { dismiss ->
+                    val entries = listOf("All" to ContactFilter.All, "Favorites" to ContactFilter.Favorites) +
+                            sourceItems.map { it to ContactFilter.Saved(it) }
+                    entries.forEach { (label, f) -> PopItem(label, { dismiss(); vm.setContactFilter(f) }, selected = active == f) }
+                }
+            }
         )
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            FilterChip("All", active == ContactFilter.All, { vm.contactFilter.value = ContactFilter.All })
-            if (simChips) {
-                FilterChip("SIM 1", active == ContactFilter.Sim(1), { vm.contactFilter.value = ContactFilter.Sim(1) })
-                FilterChip("SIM 2", active == ContactFilter.Sim(2), { vm.contactFilter.value = ContactFilter.Sim(2) })
-            }
-            FilterChip("Favorites", active == ContactFilter.Favorites, { vm.contactFilter.value = ContactFilter.Favorites })
-            if (savedChips) savedIn.forEach { label ->
-                FilterChip(label, active == ContactFilter.Saved(label), { vm.contactFilter.value = ContactFilter.Saved(label) })
-            }
-        }
+        Spacer(Modifier.height(4.dp))
         when (val s = list) {
             Load.Loading -> ListSkeleton()
             Load.Denied -> StateMessage(Icons.Rounded.Contacts, "See your contacts", null, "Allow access", actions.requestContacts)
@@ -137,10 +133,6 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
                 when {
                     q.isNotBlank() -> StateMessage(Icons.Rounded.Search, "No matches")
                     active == ContactFilter.Favorites -> StateMessage(Icons.Rounded.Star, "No favorites yet", "Star a contact and it shows up here")
-                    active is ContactFilter.Sim -> StateMessage(
-                        Icons.Rounded.SimCard, "No contacts on SIM ${active.slot}",
-                        "People you call, or who call you, on this SIM show up here"
-                    )
                     active is ContactFilter.Saved -> StateMessage(Icons.Rounded.Contacts, "Nothing saved in ${active.label}")
                     else -> StateMessage(Icons.Rounded.Contacts, "No contacts")
                 }
@@ -151,12 +143,17 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
     }
 }
 
-/** Quiet search field with a clear button that appears as soon as there's text, and Search on the keyboard to dismiss it. */
+/**
+ * Quiet search field. The clear button appears as soon as there's text; with [onEmptyClear] it stays visible when empty
+ * and closes the search instead. [trailing] adds something after it (a filter button). Search on the keyboard dismisses it.
+ */
 @Composable
 fun SearchField(
     modifier: Modifier = Modifier.padding(horizontal = 20.dp),
     value: String, onChange: (String) -> Unit,
     placeholder: String = "Search contacts", autoFocus: Boolean = false,
+    onEmptyClear: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = LocalColors.current
     val focus = remember { FocusRequester() }
@@ -180,17 +177,21 @@ fun SearchField(
 
         Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
             androidx.compose.animation.AnimatedVisibility(
-                visible = value.isNotEmpty(),
+                visible = value.isNotEmpty() || onEmptyClear != null,
                 enter = if (motion) fadeIn() + scaleIn(initialScale = 0.7f) else EnterTransition.None,
                 exit = if (motion) fadeOut() + scaleOut(targetScale = 0.7f) else ExitTransition.None
             ) {
+                val label = if (value.isEmpty()) "Close search" else "Clear search"
                 Box(
                     Modifier.size(48.dp).clip(CircleShape)
-                        .clickable(role = Role.Button, onClickLabel = "Clear search") { onChange(""); focus.requestFocus() },
+                        .clickable(role = Role.Button, onClickLabel = label) {
+                            if (value.isNotEmpty()) { onChange(""); focus.requestFocus() } else onEmptyClear?.invoke()
+                        },
                     contentAlignment = Alignment.Center
-                ) { Icon(Icons.Rounded.Close, "Clear search", tint = c.inkDim, modifier = Modifier.size(20.dp)) }
+                ) { Icon(Icons.Rounded.Close, label, tint = c.inkDim, modifier = Modifier.size(20.dp)) }
             }
         }
+        trailing?.invoke()
     }
 }
 

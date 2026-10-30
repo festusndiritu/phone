@@ -28,6 +28,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import android.content.Intent
 import android.os.Bundle
 import android.os.PowerManager
+import android.provider.Settings
 import android.telecom.Call
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -84,6 +85,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -212,7 +215,7 @@ class InCallActivity : ComponentActivity() {
 
     /** Settings.Secure.INCALL_POWER_BUTTON_BEHAVIOR is hidden from the SDK; its key is "incall_power_button_behavior", 1 = screen off, 2 = hang up. */
     private fun powerButtonEndsCall(): Boolean = try {
-        android.provider.Settings.Secure.getInt(contentResolver, "incall_power_button_behavior", 1) == 2
+        Settings.Secure.getInt(contentResolver, "incall_power_button_behavior", 1) == 2
     } catch (e: Exception) { Diag.fail("power_button_ends_call", e); true }
 
     private fun releaseProximity() {
@@ -281,8 +284,15 @@ fun SimChoice(label: String, onClick: () -> Unit) {
 @Composable
 private fun IncomingScreen(call: CallInfo, others: List<CallInfo>) {
     val c = LocalColors.current
-    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val ctx = LocalContext.current
     val hints by Prefs.gestureHints.collectAsState()
+    var replying by remember { mutableStateOf(false) }
+    val canReply = call.number != null && call.presentation == android.telecom.TelecomManager.PRESENTATION_ALLOWED
+    val sendReply = { t: String ->
+        val n = call.number
+        if (Prefs.replyViaWhatsApp.value && n != null) { CallManager.reject(call.id); openWhatsApp(ctx, n, t) }
+        else CallManager.reject(call.id, t)
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(24.dp))
         Text(when { others.isNotEmpty() -> "CALL WAITING"; call.isVideo -> "INCOMING VIDEO CALL"; else -> "INCOMING CALL" }, style = T.label, color = c.accent)
@@ -296,7 +306,12 @@ private fun IncomingScreen(call: CallInfo, others: List<CallInfo>) {
         }
         call.sim?.let { Spacer(Modifier.height(10.dp)); SimChip(it) }
         Spacer(Modifier.weight(1f))
-        if (others.isNotEmpty()) {
+        if (replying && canReply) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                QuickReplies.forEach { t -> TextPill(t, { sendReply(t) }) }
+                TextPill("Cancel", { replying = false })
+            }
+        } else if (others.isNotEmpty()) {
             Text("On a call with ${others.first().title()}", color = c.inkDim, fontSize = 14.sp, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -307,6 +322,7 @@ private fun IncomingScreen(call: CallInfo, others: List<CallInfo>) {
             val answerVideo = rememberCameraGate { ok -> CallManager.answerVideo(call.id, ok) }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TextPill("Silence", { CallManager.silence(ctx) })
+                if (canReply) TextPill("Reply", { replying = true })
                 if (call.isVideo) TextPill("Answer with video", { answerVideo() }, filled = true)
             }
         }
@@ -323,6 +339,8 @@ private fun IncomingScreen(call: CallInfo, others: List<CallInfo>) {
     }
 }
 
+private val QuickReplies = listOf("Can't talk, will call you back", "In a meeting, will call later", "Please text me instead")
+
 private fun fmtDur(sec: Long): String {
     val s = if (sec < 0) 0 else sec
     val h = s / 3600; val m = (s % 3600) / 60; val r = s % 60
@@ -335,12 +353,12 @@ private class Ctl(val icon: ImageVector, val label: String, val on: Boolean, val
 private fun CtlButton(ctl: Ctl) {
     val c = LocalColors.current
     val tick = rememberTick()
-    Column(Modifier.width(96.dp).alpha(if (ctl.enabled) 1f else 0.38f), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.width(80.dp).alpha(if (ctl.enabled) 1f else 0.38f), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
-            Modifier.size(78.dp).clip(CircleShape).background(if (ctl.on) c.ink else c.surface)
+            Modifier.size(68.dp).clip(CircleShape).background(if (ctl.on) c.ink else c.surface)
                 .clickable(enabled = ctl.enabled, role = Role.Button, onClick = { tick(); ctl.onClick() }),
             contentAlignment = Alignment.Center
-        ) { Icon(ctl.icon, null, tint = if (ctl.on) c.bg else c.ink, modifier = Modifier.size(34.dp)) }
+        ) { Icon(ctl.icon, null, tint = if (ctl.on) c.bg else c.ink, modifier = Modifier.size(28.dp)) }
         Spacer(Modifier.height(8.dp))
         Text(ctl.label, color = c.inkDim, fontSize = 13.sp, maxLines = 1)
     }
@@ -359,7 +377,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
         while (isActive && visible) { value = System.currentTimeMillis(); delay(1000.milliseconds) }
     }
 
-    val ctx = androidx.compose.ui.platform.LocalContext.current
+//    val ctx = androidx.compose.ui.platform.LocalContext.current
     val askVideo = rememberCameraGate { ok ->
         if (ok) CallManager.requestVideo(call.id, true) else Notices.show("Camera permission is needed for video")
     }
@@ -372,7 +390,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
         Call.STATE_CONNECTING -> "Connecting…"
         Call.STATE_SELECT_PHONE_ACCOUNT -> "Choose a SIM"
         Call.STATE_DISCONNECTING -> "Ending…"
-        Call.STATE_DISCONNECTED -> endText(call.endCode)
+        Call.STATE_DISCONNECTED -> call.endLabel ?: endText(call.endCode)
         else -> "Preparing…"
     }
     val statusColor = when (call.state) {
@@ -455,7 +473,12 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
 
                 val heldOther = others.firstOrNull { it.state == Call.STATE_HOLDING }
                 val controls = listOfNotNull(
-                    Ctl(if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, "Mute", muted, live) { CallManager.setMuted(!muted) },
+                    Ctl(
+                        if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                        "Mute",
+                        muted,
+                        live
+                    ) { CallManager.setMuted(!muted) },
                     Ctl(Icons.Rounded.Dialpad, "Keypad", false, connected || call.state == Call.STATE_DIALING) { keypad = true },
                     Ctl(routeIcon, routeLabel, speaker || route == AudioUi.BLUETOOTH, live) {
                         if (multi) routes = true
@@ -465,7 +488,12 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                         if (call.state == Call.STATE_HOLDING) "Resume" else "Hold", call.state == Call.STATE_HOLDING,
                         call.canHold && connected) { CallManager.toggleHold(call.id) },
                     Ctl(Icons.Rounded.PersonAdd, "Add call", false, connected && others.isEmpty(), onAddCall),
-                    if (call.canVideo && !call.isVideo) Ctl(Icons.Rounded.Videocam, if (vui.pendingUp) "Asking…" else "Video", vui.pendingUp, call.state == Call.STATE_ACTIVE && !vui.pendingUp) { askVideo() } else null,
+                    if (call.canVideo && !call.isVideo) Ctl(
+                        Icons.Rounded.Videocam,
+                        if (vui.pendingUp) "Asking…" else "Video",
+                        vui.pendingUp,
+                        call.state == Call.STATE_ACTIVE && !vui.pendingUp
+                    ) { askVideo() } else null,
                     when {
                         call.canMerge && connected -> Ctl(Icons.AutoMirrored.Rounded.CallMerge, "Merge",
                             on = false,
@@ -482,9 +510,10 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                         else -> null
                     }
                 )
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     controls.chunked(3).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { row.forEach { CtlButton(it) } }
+                        // Full rows spread across the width; a short last row is centered.
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = if (row.size == 3) Arrangement.SpaceEvenly else Arrangement.spacedBy(32.dp, Alignment.CenterHorizontally)) { row.forEach { CtlButton(it) } }
                     }
                 }
             }
@@ -523,7 +552,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
 /** Runs [onResult] with true if the camera permission is (or just became) granted. */
 @Composable
 private fun rememberCameraGate(onResult: (Boolean) -> Unit): () -> Unit {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val ctx = LocalContext.current
     val latest by rememberUpdatedState(onResult)
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { latest(it) }
     return remember(launcher) { { if (ctx.granted(Manifest.permission.CAMERA)) latest(true) else launcher.launch(Manifest.permission.CAMERA) } }
@@ -570,7 +599,15 @@ private fun VideoSurface(modifier: Modifier, contentAspect: Float, fit: VideoFit
 private fun VideoBtn(modifier: Modifier = Modifier, icon: ImageVector, label: String, on: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     val tick = rememberTick()
     Column(
-        modifier.alpha(if (enabled) 1f else 0.38f).clip(RoundedCornerShape(16.dp)).clickable(enabled = enabled, role = Role.Button, onClickLabel = label) { tick(); onClick() }.padding(vertical = 4.dp),
+        modifier
+            .alpha(if (enabled) 1f else 0.38f)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                onClickLabel = label
+            ) { tick(); onClick() }
+            .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
@@ -586,14 +623,24 @@ private fun VideoBtn(modifier: Modifier = Modifier, icon: ImageVector, label: St
 @Composable
 private fun CallClock(connectedAt: Long) {
     val visible by CallManager.uiVisible.collectAsState()
-    val now by produceState(System.currentTimeMillis(), visible) { while (visible) { value = System.currentTimeMillis(); delay(1000.milliseconds) } }
-    Text(if (connectedAt > 0) fmtDur((now - connectedAt) / 1000) else "Connected", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
+    val now by produceState(
+        System.currentTimeMillis(),
+        visible
+    ) { while (visible) {
+        value = System.currentTimeMillis()
+        delay(1000.milliseconds) }
+    }
+    Text(
+        if (connectedAt > 0) fmtDur((now - connectedAt) / 1000) else "Connected",
+        color = Color.White.copy(alpha = 0.75f),
+        fontSize = 14.sp
+    )
 }
 
 @Composable
 private fun VideoCallScreen(call: CallInfo, audio: AudioUi?, inPip: Boolean, onMinimize: (() -> Unit)?) {
     val c = LocalColors.current
-    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val ctx = LocalContext.current
     val cfg = LocalConfiguration.current
     val ui by CallManager.video.collectAsState()
     val speaker = audio?.route == AudioUi.SPEAKER
@@ -602,13 +649,17 @@ private fun VideoCallScreen(call: CallInfo, audio: AudioUi?, inPip: Boolean, onM
     // Keep the last good size so a momentary 0x0 report doesn't snap the picture to a different shape.
     val lockedRemote = remember { mutableFloatStateOf(0f) }
     LaunchedEffect(remoteAspect) { if (remoteAspect > 0f) lockedRemote.floatValue = remoteAspect }
-    val landscape = cfg.screenWidthDp > cfg.screenHeightDp
-    val previewAspect = if (landscape) 1f / ui.previewAspect else ui.previewAspect // camera capabilities are reported portrait-first
 
-    // Video calls start on the loudspeaker, like Google Phone.
+    val containerSize = LocalWindowInfo.current.containerSize
+    val landscape = containerSize.width > containerSize.height
+
+    val previewAspect = if (landscape) 1f / ui.previewAspect else ui.previewAspect
+
+    // Video calls start on the loudspeaker
     LaunchedEffect(call.id) { if (audio?.route == AudioUi.EARPIECE) CallManager.setRoute(AudioUi.SPEAKER) }
     LaunchedEffect(call.id, cfg.orientation) {
-        val rotation = (ctx as? android.app.Activity)?.windowManager?.defaultDisplay?.rotation ?: 0
+        val activity = ctx as? android.app.Activity
+        val rotation = activity?.display?.rotation ?: 0
         CallManager.setOrientation(call.id, rotation * 90)
     }
 
@@ -622,8 +673,15 @@ private fun VideoCallScreen(call: CallInfo, audio: AudioUi?, inPip: Boolean, onM
         if (!inPip) Column(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(20.dp)) {
             if (onMinimize != null) {
                 Row(
-                    Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = 0.18f))
-                        .clickable(role = Role.Button, onClickLabel = "Minimize video", onClick = onMinimize).padding(horizontal = 12.dp, vertical = 8.dp),
+                    Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.White.copy(alpha = 0.18f))
+                        .clickable(
+                            role = Role.Button,
+                            onClickLabel = "Minimize video",
+                            onClick = onMinimize
+                        )
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(Icons.Rounded.PictureInPictureAlt, null, tint = Color.White, modifier = Modifier.size(18.dp))
@@ -632,7 +690,15 @@ private fun VideoCallScreen(call: CallInfo, audio: AudioUi?, inPip: Boolean, onM
                 }
                 Spacer(Modifier.height(14.dp))
             }
-            Text(call.title(), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 200.dp))
+            Text(
+                call.title(),
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 200.dp)
+            )
             CallClock(call.connectedAt)
         }
         if (!inPip && call.sendingVideo && ui.camOn && !ui.switching) {
@@ -652,22 +718,56 @@ private fun VideoCallScreen(call: CallInfo, audio: AudioUi?, inPip: Boolean, onM
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Top) {
-                VideoBtn(Modifier.weight(1f), if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (muted) "Unmute" else "Mute", muted) { CallManager.setMuted(!muted) }
+                VideoBtn(
+                    Modifier.weight(1f),
+                    if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                    if (muted) "Unmute" else "Mute",
+                    muted
+                ) { CallManager.setMuted(!muted) }
                 if (call.sendingVideo) {
-                    VideoBtn(Modifier.weight(1f), if (ui.camOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, if (ui.camOn) "Stop video" else "Start video", !ui.camOn ) { CallManager.toggleCamera() }
+                    VideoBtn(
+                        Modifier.weight(1f),
+                        if (ui.camOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff,
+                        if (ui.camOn) "Stop video" else "Start video",
+                        !ui.camOn
+                    ) { CallManager.toggleCamera() }
                     // Always present (dimmed when the camera is off or mid-swap) so the row never shifts around.
-                    VideoBtn(Modifier.weight(1f), Icons.Rounded.Cameraswitch, if (ui.switching) "Switching…" else if (ui.front) "Rear camera" else "Front camera", false , enabled = ui.camOn && !ui.switching) { CallManager.flipCamera() }
+                    VideoBtn(
+                        Modifier.weight(1f),
+                        Icons.Rounded.Cameraswitch,
+                        if (ui.switching) "Switching…" else if (ui.front) "Rear camera" else "Front camera",
+                        false,
+                        enabled = ui.camOn && !ui.switching
+                    ) { CallManager.flipCamera() }
                 }
-                VideoBtn(Modifier.weight(1f), Icons.AutoMirrored.Rounded.VolumeUp, if (speaker) "Speaker on" else "Speaker off", speaker) {
+                VideoBtn(
+                    Modifier.weight(1f),
+                    Icons.AutoMirrored.Rounded.VolumeUp,
+                    if (speaker) "Speaker on" else "Speaker off",
+                    speaker
+                ) {
                     CallManager.setRoute(if (speaker) AudioUi.EARPIECE else AudioUi.SPEAKER)
                 }
-                VideoBtn(Modifier.weight(1f), Icons.Rounded.PhoneInTalk, "Voice only", false) { CallManager.requestVideo(call.id, false) }
+                VideoBtn(
+                    Modifier.weight(1f),
+                    Icons.Rounded.PhoneInTalk,
+                    "Voice only",
+                    false
+                ) { CallManager.requestVideo(call.id, false) }
             }
             Spacer(Modifier.height(12.dp))
             Row(
-                Modifier.fillMaxWidth(0.7f).heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(c.decline)
-                    .clickable(role = Role.Button, onClickLabel = "End call") { CallManager.disconnect(call.id) },
-                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
+                Modifier
+                    .fillMaxWidth(0.7f)
+                    .heightIn(min = 52.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(c.decline)
+                    .clickable(
+                        role = Role.Button,
+                        onClickLabel = "End call"
+                    ) { CallManager.disconnect(call.id) },
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(Icons.Rounded.CallEnd, null, tint = Color.White, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
@@ -682,10 +782,22 @@ private fun VideoRequestDialog(call: CallInfo) {
     val c = LocalColors.current
     val accept = rememberCameraGate { ok -> CallManager.answerVideoRequest(call.id, true, receiveOnly = !ok) }
     Dialog(onDismissRequest = { CallManager.answerVideoRequest(call.id, false) }) {
-        Column(Modifier.clip(RoundedCornerShape(24.dp)).background(c.surface).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            Modifier
+                .clip(RoundedCornerShape(24.dp))
+                .background(c.surface)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Icon(Icons.Rounded.Videocam, null, tint = c.accent, modifier = Modifier.size(32.dp))
             Spacer(Modifier.height(12.dp))
-            Text("${call.title()} wants to switch to video", color = c.ink, fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+            Text(
+                "${call.title()} wants to switch to video",
+                color = c.ink,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center
+            )
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TextPill("Decline", { CallManager.answerVideoRequest(call.id, false) })

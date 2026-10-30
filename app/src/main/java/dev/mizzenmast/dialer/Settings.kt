@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.TouchApp
+import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Vibration
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -88,6 +89,8 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
     val diag by Prefs.diagnostics.collectAsState()
     val silence by Prefs.silenceUnknown.collectAsState()
     val showFavorites by Prefs.showFavorites.collectAsState()
+    val vibrate by Prefs.vibrateOnAnswer.collectAsState()
+    val waReply by Prefs.replyViaWhatsApp.collectAsState()
 
     var troubleOpen by rememberSaveable { mutableStateOf(false) }
     var themeDialog by remember { mutableStateOf(false) }
@@ -101,6 +104,9 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
             NavRow(Icons.Rounded.SimCard, "SIM & calling accounts", "Choose how outgoing calls are placed") { actions.open(SettingsTarget.CallingAccounts) }
             NavRow(Icons.AutoMirrored.Rounded.VolumeUp, "Sound & vibration", "Ringtone, alerts and call sounds") { actions.open(SettingsTarget.Sound) }
             NavRow(Icons.Rounded.Block, "Blocked numbers", "Manage blocked callers") { actions.open(SettingsTarget.Blocked) }
+            ToggleRow(Icons.Rounded.Vibration, "Vibrate when answered", "A short buzz when the other side picks up", vibrate) {
+                Prefs.set("vibrate_on_answer", Prefs.vibrateOnAnswer, it)
+            }
         }
 
         SettingsSection("Incoming calls", "Control how calls appear and behave") {
@@ -115,6 +121,9 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
                     if (on) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                     android.content.pm.PackageManager.DONT_KILL_APP
                 )
+            }
+            ToggleRow(Icons.Rounded.Sms, "Reply on WhatsApp", "Decline with a message opens a WhatsApp chat instead of sending an SMS", waReply) {
+                Prefs.set("reply_whatsapp", Prefs.replyViaWhatsApp, it)
             }
             NavRow(Icons.Rounded.Notifications, "Call notifications", "Alerts and notification behavior") { actions.open(SettingsTarget.Notifications) }
         }

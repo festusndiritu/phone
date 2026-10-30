@@ -156,6 +156,8 @@ class MainActivity : ComponentActivity() {
             Notices.show("Allow phone access in Settings to choose a SIM")
         } else {
             val sims = SimLabels.accounts(this)
+            val preferred = Prefs.simFor(n)?.let { k -> sims.firstOrNull { SimLabels.key(it) == k } }
+            if (preferred != null) { placeCall(n, preferred); return }
             if (sims.size > 1 && !SimLabels.hasDefaultAccount(this)) {
                 vm.simPicker.value = n to sims.map { h -> SimOption(h, SimLabels.label(this, h) ?: "SIM") }
                 return
@@ -204,18 +206,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Opens a WhatsApp chat via wa.me. Numbers are normalized to international format using the SIM's country. */
-    private fun whatsapp(number: String) {
-        val iso = (getSystemService(android.telephony.TelephonyManager::class.java)?.simCountryIso?.takeIf { it.isNotBlank() }
-            ?: java.util.Locale.getDefault().country).uppercase()
-        val digits = (android.telephony.PhoneNumberUtils.formatNumberToE164(number, iso) ?: number).filter(Char::isDigit)
-        if (digits.isEmpty()) { Notices.show("Invalid number"); return }
-        val uri = "https://wa.me/$digits".toUri()
-        for (pkg in listOf("com.whatsapp", "com.whatsapp.w4b")) {
-            try { startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage(pkg)); return } catch (_: android.content.ActivityNotFoundException) { }
-        }
-        Notices.show("WhatsApp not installed")
-    }
+    private fun whatsapp(number: String) = openWhatsApp(this, number)
 
     private fun openContact(c: Contact) {
         val uri = ContactsContract.Contacts.getLookupUri(c.id, c.lookupKey)

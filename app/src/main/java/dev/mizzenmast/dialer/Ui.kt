@@ -1,26 +1,25 @@
-@file:OptIn(ExperimentalFoundationApi::class)
-
 package dev.mizzenmast.dialer
 
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.border
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
@@ -30,6 +29,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -38,31 +38,33 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CallEnd
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Contacts
-import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dialpad
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -79,13 +81,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
@@ -95,8 +99,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -413,7 +417,7 @@ fun NoticeHost(modifier: Modifier = Modifier) {
 
 /** Puts [number] on the clipboard. Android 13+ shows its own "copied" confirmation, so only older versions get a toast. */
 fun copyNumber(ctx: Context, number: String) {
-    ctx.getSystemService(android.content.ClipboardManager::class.java)
+    ctx.getSystemService(ClipboardManager::class.java)
         ?.setPrimaryClip(android.content.ClipData.newPlainText("Phone number", number))
     if (android.os.Build.VERSION.SDK_INT < 33) Notices.show("Number copied")
 }
@@ -424,7 +428,7 @@ fun NumberMenu(number: String, onEdit: () -> Unit, onDismiss: () -> Unit) {
     val c = LocalColors.current
     val ctx = LocalContext.current
     @Composable
-    fun Item(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    fun Item(icon: ImageVector, label: String, onClick: () -> Unit) {
         Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = c.ink, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(16.dp))
@@ -580,5 +584,77 @@ fun SwipeDecision(key: Any, onAnswer: () -> Unit, onDecline: () -> Unit) {
                 ),
             contentAlignment = Alignment.Center
         ) { Icon(Icons.Rounded.Phone, null, tint = c.bg) }
+    }
+}
+
+/**
+ * The app's own popup menu: a rounded card that grows out of its top-right corner. Put it inside the Box that holds its
+ * button (48dp) and it opens just under it, right edges aligned. Items are [PopItem]s.
+ */
+@Composable
+fun PopMenu(expanded: Boolean, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    if (!expanded) return
+    val c = LocalColors.current
+    val motion = rememberMotionEnabled()
+    val density = LocalDensity.current
+    val shape = RoundedCornerShape(22.dp)
+    val visible = remember { MutableTransitionState(!motion).apply { targetState = true } }
+    androidx.compose.ui.window.Popup(
+        alignment = Alignment.TopEnd,
+        // the 10dp of padding below leaves room for the shadow; the offset cancels it so the card sits right under the button
+        offset = with(density) { IntOffset(10.dp.roundToPx(), 36.dp.roundToPx()) },
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.PopupProperties(focusable = true)
+    ) {
+        androidx.compose.animation.AnimatedVisibility(
+            visibleState = visible,
+            enter = androidx.compose.animation.fadeIn(tween(120)) +
+                    androidx.compose.animation.scaleIn(tween(170, easing = FastOutSlowInEasing), initialScale = 0.82f, transformOrigin = TransformOrigin(1f, 0f)),
+            exit = androidx.compose.animation.ExitTransition.None
+        ) {
+            Column(
+                Modifier.padding(10.dp).shadow(14.dp, shape).clip(shape).background(c.surfaceHigh)
+                    .widthIn(min = 210.dp, max = 280.dp).padding(vertical = 6.dp),
+                content = content
+            )
+        }
+    }
+}
+
+/** One row of a [PopMenu]. [selected] gets a tinted pill and a check; [danger] is red. */
+@Composable
+fun PopItem(label: String, onClick: () -> Unit, icon: ImageVector? = null, selected: Boolean = false, danger: Boolean = false, enabled: Boolean = true) {
+    val c = LocalColors.current
+    val tint = when { danger -> c.decline; selected -> c.accent; else -> c.ink }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 6.dp).clip(RoundedCornerShape(16.dp))
+            .background(if (selected) c.accent.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .heightIn(min = 48.dp).padding(horizontal = 12.dp).alpha(if (enabled) 1f else 0.38f),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(icon, null, tint = if (selected || danger) tint else c.inkDim, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(12.dp))
+        }
+        Text(label, color = tint, fontSize = 16.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.weight(1f))
+        if (selected) {
+            Spacer(Modifier.width(10.dp))
+            Icon(Icons.Rounded.Check, null, tint = c.accent, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+/** Filter button for inside a search field. Tinted when a filter is on. [menu] builds the [PopItem]s and gets a dismiss function. */
+@Composable
+fun FilterButton(active: Boolean, desc: String, menu: @Composable ColumnScope.(dismiss: () -> Unit) -> Unit) {
+    val c = LocalColors.current
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = desc) { open = true },
+            contentAlignment = Alignment.Center
+        ) { Icon(Icons.Rounded.FilterList, desc, tint = if (active) c.accent else c.inkDim, modifier = Modifier.size(22.dp)) }
+        PopMenu(open, { open = false }) { menu { open = false } }
     }
 }

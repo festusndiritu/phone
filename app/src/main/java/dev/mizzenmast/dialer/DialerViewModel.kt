@@ -21,14 +21,23 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.milliseconds
 
-/** Smart filters at the top of Contacts. The SIM filters use the call log: people you've called or been called by on that SIM. */
+/** Filters for Contacts: by where the contact is saved. The choice persists. */
 sealed interface ContactFilter {
     data object All : ContactFilter
     data object Favorites : ContactFilter
-    /** People you've called, or who called you, on this SIM slot (from the call log). */
-    data class Sim(val slot: Int) : ContactFilter
-    /** Contacts stored in one place: a Google account, "Phone" or a SIM. */
+    /** Contacts stored in one place: "SIM 1", "SIM 2", "Phone", a Google account, WhatsApp... */
     data class Saved(val label: String) : ContactFilter
+
+    /** The form kept in [Prefs.contactFilter]. */
+    val key: String get() = when (this) { All -> "all"; Favorites -> "fav"; is Saved -> "src:$label" }
+
+    companion object {
+        fun parse(k: String): ContactFilter = when {
+            k == "fav" -> Favorites
+            k.startsWith("src:") -> Saved(k.removePrefix("src:"))
+            else -> All
+        }
+    }
 }
 
 /** One ViewModel for the main app UI. In-call state lives in CallManager (process-wide, owned by the InCallService). */
@@ -39,7 +48,7 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
     val tab = MutableStateFlow(0)
     val dial = MutableStateFlow("")
     val dialerOpen = MutableStateFlow(false)
-    val logFilter = MutableStateFlow(0) // 0 all, 1 missed
+    val logFilter = MutableStateFlow(0) // 0 all, 1 missed, 2 incoming, 3 outgoing
     /** Number waiting for the user to choose a SIM (set only when Android has no default calling SIM). */
     val simPicker = MutableStateFlow<Pair<String, List<SimOption>>?>(null)
     val query = MutableStateFlow("")
@@ -50,7 +59,24 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
     val selectionActive = MutableStateFlow(false)
     val detailContact = MutableStateFlow<Contact?>(null)
     val tick = MutableStateFlow(0)
-    val contactFilter = MutableStateFlow<ContactFilter>(ContactFilter.All)
+    val contactFilter = MutableStateFlow(ContactFilter.parse(Prefs.contactFilter.value))
+    /** True for a few seconds after "Sync contacts", just to show it's working. */
+    val syncing = MutableStateFlow(false)
+
+    fun setContactFilter(f: ContactFilter) { contactFilter.value = f; Prefs.setContactFilter(f.key) }
+
+    /** Asks the accounts to sync now and reloads what's on the phone. Later changes arrive through the contacts observer. */
+    fun syncContacts() {
+        if (syncing.value) return
+        syncing.value = true
+        viewModelScope.launch {
+            val n = withContext(Dispatchers.IO) { ContactsRepo.requestSync(ctx) }
+            reloadContacts()
+            Notices.show(if (n > 0) "Syncing contacts…" else "Contacts refreshed")
+            delay(3000.milliseconds)
+            syncing.value = false
+        }
+    }
 
     /** Bottom-tab navigation. Switching tabs always closes the detail screens that sit on top of them. */
     fun selectTab(i: Int) {
@@ -73,7 +99,7 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Recents, ready to draw: grouped, titled and time-formatted off the main thread. Rebuilt when the log, the contacts or the filter change. */
     val recents: StateFlow<Load<RecentsModel>> = combine(_log, index, logFilter) { l, idx, f ->
-        l.mapReady { buildRecents(ctx, it, f == 1, idx) }
+        l.mapReady { buildRecents(ctx, it, f, idx) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, Load.Loading)
 
     /** Number of the most recent call *you placed* (not the newest log entry, which may be incoming or missed). Null when none. */
@@ -82,19 +108,16 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    /** Per SIM slot (1, 2): normalized numbers that appear in the call log on that SIM. Empty when slots are unknown (single SIM, no phone permission). */
-    val simNumbers: StateFlow<Map<Int, Set<String>>> = _log
-        .map { l -> simNumbersOf((l as? Load.Ready)?.data.orEmpty()) }
-        .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
-
-    val filtered: StateFlow<Load<List<Contact>>> = combine(_contacts, query, contactFilter, simNumbers) { l, q, f, sims -> filterContacts(l, q, f, sims) }
+    val filtered: StateFlow<Load<List<Contact>>> = combine(_contacts, query, contactFilter) { l, q, f -> filterContacts(l, q, f) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, Load.Loading)
 
-    /** Every place contacts are stored in, for the filter chips. "Phone" first, then alphabetical. */
+    /** Every place contacts are stored in, for the filter menu: SIMs, Phone, accounts, then WhatsApp and anything else. */
     val savedIn: StateFlow<List<String>> = _contacts
-        .map { l -> (l as? Load.Ready)?.data.orEmpty().flatMapTo(HashSet()) { it.savedIn }.sortedWith(compareBy<String>({ it != "Phone" }, { it })) }
+        .map { l ->
+            fun rank(s: String) = when { s.startsWith("SIM") -> 0; s == "Phone" -> 1; s == "WhatsApp" -> 3; '@' in s -> 2; else -> 4 }
+            (l as? Load.Ready)?.data.orEmpty().flatMapTo(HashSet()) { it.savedIn }.sortedWith(compareBy({ rank(it) }, { it }))
+        }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -115,28 +138,16 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
         else emptyList()
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private fun simNumbersOf(log: List<LogEntry>): Map<Int, Set<String>> {
-        val out = HashMap<Int, MutableSet<String>>()
-        for ((_, number, _, _, _, _, _, _, simSlot) in log) {
-            val slot = simSlot ?: continue
-            val k = ContactIndex.key(number)
-            if (k.isNotEmpty()) out.getOrPut(slot) { HashSet() }.add(k)
-        }
-        return out
-    }
-
-    private fun filterContacts(l: Load<List<Contact>>, q: String, filter: ContactFilter, sims: Map<Int, Set<String>>): Load<List<Contact>> {
+    private fun filterContacts(l: Load<List<Contact>>, q: String, filter: ContactFilter): Load<List<Contact>> {
         if (l !is Load.Ready) return l
-        // SIM chips are hidden when no slot is known, so a stale SIM selection behaves like "All".
-        val f = if (filter is ContactFilter.Sim && sims.isEmpty()) ContactFilter.All else filter
+        // A saved filter for a place that no longer exists (account removed) behaves like "All" instead of an empty list.
+        val f = if (filter is ContactFilter.Saved && l.data.none { filter.label in it.savedIn }) ContactFilter.All else filter
         val s = q.trim()
         if (s.isEmpty() && f == ContactFilter.All) return l
         val digits = s.filter { it.isDigit() }
-        val simKeys: Set<String>? = (f as? ContactFilter.Sim)?.let { sims[it.slot].orEmpty() }
         return Load.Ready(l.data.filter { c ->
             (f !is ContactFilter.Favorites || c.starred) &&
                     (f !is ContactFilter.Saved || f.label in c.savedIn) &&
-                    (simKeys == null || c.phones.any { ContactIndex.key(it.number) in simKeys }) &&
                     (s.isEmpty() || c.name.contains(s, ignoreCase = true) ||
                             (digits.length >= 2 && c.phones.any { it.number.filter(Char::isDigit).contains(digits) }))
         })

@@ -1,5 +1,6 @@
 package dev.mizzenmast.dialer
 
+import android.Manifest
 import android.content.ContentResolver
 import android.content.Context
 import android.content.pm.PackageManager
@@ -11,18 +12,23 @@ import android.os.Looper
 import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.telephony.PhoneNumberUtils
+import android.telephony.SubscriptionManager
+import android.telephony.TelephonyManager
+import androidx.annotation.RequiresPermission
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import java.util.Locale
+import androidx.core.net.toUri
 
 fun Context.granted(p: String) = ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
 
 /** Needed to place calls and to know which SIM to offer. */
-val PHONE_PERMS = arrayOf(android.Manifest.permission.CALL_PHONE, android.Manifest.permission.READ_PHONE_STATE)
+val PHONE_PERMS = arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_PHONE_STATE)
 
 data class ContactPhone(val number: String, val label: String)
 /** [savedIn] is where the contact is stored: a Google account's email, "Phone", or a SIM (see [ContactsRepo.sourceLabel]). */
@@ -45,20 +51,22 @@ object SimLabels {
     private val cache = HashMap<String, String?>()
 
     /** Call-capable accounts; empty (not an error) when READ_PHONE_STATE is not granted. */
-    fun accounts(ctx: Context): List<android.telecom.PhoneAccountHandle> {
-        if (ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return emptyList()
+    fun accounts(ctx: Context): List<PhoneAccountHandle> {
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return emptyList()
         return ctx.getSystemService(TelecomManager::class.java)?.callCapablePhoneAccounts.orEmpty()
     }
 
     fun multiSim(ctx: Context): Boolean = accounts(ctx).size > 1
 
+    fun key(h: PhoneAccountHandle): String = h.componentName.flattenToString() + "/" + h.id
+
     /** False when there is no default SIM for calls, or when READ_PHONE_STATE is not granted (can't tell). */
     fun hasDefaultAccount(ctx: Context): Boolean {
-        return ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED && ctx.getSystemService(TelecomManager::class.java)?.getDefaultOutgoingPhoneAccount("tel") != null
+        return ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED && ctx.getSystemService(TelecomManager::class.java)?.getDefaultOutgoingPhoneAccount("tel") != null
     }
 
     @Synchronized
-    fun label(ctx: Context, h: android.telecom.PhoneAccountHandle?): String? {
+    fun label(ctx: Context, h: PhoneAccountHandle?): String? {
         h ?: return null
         val key = h.componentName.flattenToString() + "/" + h.id
         if (cache.containsKey(key)) return cache[key]
@@ -74,14 +82,16 @@ object SimLabels {
     @Synchronized
     fun slot(ctx: Context, component: String?, id: String?): Int? {
         if (component.isNullOrBlank() || id == null) return null
-        if (ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return null
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return null
         val key = "$component/$id"
         if (slotCache.containsKey(key)) return slotCache[key]
         val slot = try {
             val cn = android.content.ComponentName.unflattenFromString(component)
-            val subId = cn?.let { ctx.getSystemService(android.telephony.TelephonyManager::class.java)?.getSubscriptionId(android.telecom.PhoneAccountHandle(it, id)) }
+            val subId = cn?.let { ctx.getSystemService(TelephonyManager::class.java)?.getSubscriptionId(
+                PhoneAccountHandle(it, id)
+            ) }
             if (subId == null || subId < 0) null
-            else ctx.getSystemService(android.telephony.SubscriptionManager::class.java)?.getActiveSubscriptionInfo(subId)?.simSlotIndex?.takeIf { it >= 0 }?.plus(1)
+            else ctx.getSystemService(SubscriptionManager::class.java)?.getActiveSubscriptionInfo(subId)?.simSlotIndex?.takeIf { it >= 0 }?.plus(1)
         } catch (e: Exception) { Diag.fail("sim_slot", e); null }
         // A null caused by a missing permission shouldn't stick once it's granted, so only cache hits.
         if (slot != null) slotCache[key] = slot
@@ -91,7 +101,7 @@ object SimLabels {
     fun label(ctx: Context, component: String?, id: String?): String? {
         if (component.isNullOrBlank() || id == null) return null
         val cn = android.content.ComponentName.unflattenFromString(component) ?: return null
-        return label(ctx, android.telecom.PhoneAccountHandle(cn, id))
+        return label(ctx, PhoneAccountHandle(cn, id))
     }
 }
 
@@ -100,6 +110,22 @@ sealed interface Load<out T> {
     object Denied : Load<Nothing>
     data class Failed(val msg: String) : Load<Nothing>
     data class Ready<T>(val data: T) : Load<T>
+}
+
+/** Opens a WhatsApp chat via wa.me, optionally with a prefilled message. Numbers are normalized to international format using the SIM's country. */
+fun openWhatsApp(ctx: Context, number: String, text: String? = null) {
+    val iso = (ctx.getSystemService(TelephonyManager::class.java)?.simCountryIso?.takeIf { it.isNotBlank() }
+        ?: Locale.getDefault().country).uppercase()
+    val digits = (PhoneNumberUtils.formatNumberToE164(number, iso) ?: number).filter(Char::isDigit)
+    if (digits.isEmpty()) { Notices.show("Invalid number"); return }
+    val uri = ("https://wa.me/$digits" + (text?.let { "?text=" + Uri.encode(it) } ?: "")).toUri()
+    for (pkg in listOf("com.whatsapp", "com.whatsapp.w4b")) {
+        try {
+            ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri).setPackage(pkg).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        } catch (_: android.content.ActivityNotFoundException) { }
+    }
+    Notices.show("WhatsApp not installed")
 }
 
 fun pretty(number: String?): String? {
@@ -173,11 +199,86 @@ object ContactsRepo {
     }
 
     /** Account names differ per phone maker, so this goes by what the account type says and falls back to the account's own name. */
-    fun sourceLabel(type: String?, name: String?): String = when {
+    fun sourceLabel(ctx: Context?, type: String?, name: String?): String = when {
         type == "com.google" -> name?.takeIf { it.isNotBlank() } ?: "Google"
-        type?.contains("sim", ignoreCase = true) == true -> name?.takeIf { it.contains("sim", ignoreCase = true) } ?: "SIM"
+        type?.contains("whatsapp", ignoreCase = true) == true -> "WhatsApp"
+        type?.contains("sim", ignoreCase = true) == true -> {
+            if (
+                ctx != null &&
+                ContextCompat.checkSelfPermission(
+                    ctx,
+                    Manifest.permission.READ_PHONE_STATE
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                simSource(ctx, name)
+            } else {
+                // Still identify SIM 1 / SIM 2 from the account name if possible.
+                name?.let {
+                    Regex("(?i)sim\\D{0,3}([12])").find(it)
+                        ?.let { match -> "SIM ${match.groupValues[1]}" }
+                } ?: "SIM"
+            }
+        }
         type.isNullOrBlank() || listOf("local", "device", "phone").any { type.contains(it, ignoreCase = true) } -> "Phone"
         else -> name?.takeIf { it.isNotBlank() } ?: type
+    }
+
+    /** "SIM 1" / "SIM 2" from the account name ("SIM1", "USIM 2") or from the carrier it's named after; plain "SIM" when it can't tell. */
+    @RequiresPermission(Manifest.permission.READ_PHONE_STATE)
+    private fun simSource(ctx: Context?, name: String?): String {
+        name?.let { n -> Regex("(?i)sim\\D{0,3}([12])").find(n)?.let { return "SIM ${it.groupValues[1]}" } }
+        if (
+            ctx != null &&
+            !name.isNullOrBlank() &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+        ) {
+            try {
+                val subs = ctx.getSystemService(
+                    SubscriptionManager::class.java
+                )?.activeSubscriptionInfoList.orEmpty()
+
+                subs.firstOrNull { s ->
+                    listOf(s.displayName, s.carrierName).any { v ->
+                        !v.isNullOrBlank() &&
+                                name.contains(v.toString(), ignoreCase = true)
+                    }
+                }?.let { return "SIM ${it.simSlotIndex + 1}" }
+            } catch (e: SecurityException) {
+                Diag.fail("sim_source", e)
+            } catch (e: Exception) {
+                Diag.fail("sim_source", e)
+            }
+        }
+        return "SIM"
+    }
+
+    /**
+     * Asks every syncing account (Google, etc.) to refresh its contacts now, ignoring the auto-sync setting.
+     * Returns how many accounts were asked. The provider then notifies us, so the list reloads by itself as data arrives.
+     */
+    fun requestSync(ctx: Context): Int {
+        var n = 0
+        try {
+            val cols = arrayOf(ContactsContract.RawContacts.ACCOUNT_TYPE, ContactsContract.RawContacts.ACCOUNT_NAME)
+            val seen = HashSet<Pair<String, String>>()
+            ctx.contentResolver.query(ContactsContract.RawContacts.CONTENT_URI, cols, "${ContactsContract.RawContacts.DELETED} = 0", null, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val type = c.getString(0)?.takeIf { it.isNotBlank() } ?: continue
+                    val name = c.getString(1)?.takeIf { it.isNotBlank() } ?: continue
+                    if (type.contains("sim", ignoreCase = true)) continue // on-device, nothing to sync
+                    seen.add(type to name)
+                }
+            }
+            val extras = Bundle().apply {
+                putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)
+                putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+            }
+            for ((type, name) in seen) try {
+                ContentResolver.requestSync(android.accounts.Account(name, type), ContactsContract.AUTHORITY, extras)
+                n++
+            } catch (e: Exception) { Diag.fail("request_sync", e) }
+        } catch (e: Exception) { Diag.fail("request_sync_accounts", e) }
+        return n
     }
 
     /** Contact id to the places it is stored. A joined contact can live in several accounts. Failure only means no source filters. */
@@ -185,9 +286,17 @@ object ContactsRepo {
         val out = HashMap<Long, MutableSet<String>>()
         try {
             val cols = arrayOf(ContactsContract.RawContacts.CONTACT_ID, ContactsContract.RawContacts.ACCOUNT_TYPE, ContactsContract.RawContacts.ACCOUNT_NAME)
+            val kinds = HashSet<String>()
             ctx.contentResolver.query(ContactsContract.RawContacts.CONTENT_URI, cols, "${ContactsContract.RawContacts.DELETED} = 0", null, null)?.use { c ->
-                while (c.moveToNext()) out.getOrPut(c.getLong(0)) { HashSet() }.add(sourceLabel(c.getString(1), c.getString(2)))
+                while (c.moveToNext()) {
+                    val label = sourceLabel(ctx, c.getString(1), c.getString(2))
+                    out.getOrPut(c.getLong(0)) { HashSet() }.add(label)
+                    // Account types only (never names): shows how this phone names its SIM / WhatsApp accounts.
+                    val type = c.getString(1)
+                    if (type != "com.google") kinds.add("${type?.takeIf { it.isNotBlank() } ?: "local"}->$label")
+                }
             }
+            Diag.log("contact_sources", 0, kinds.sorted().joinToString(" | ").take(300))
         } catch (e: Exception) { Diag.fail("contact_sources", e) }
         return out
     }
@@ -200,7 +309,7 @@ object ContactsRepo {
 
     /** Fast single-number lookup for incoming calls. Blocking; call from IO. Returns null if unavailable. */
     fun lookup(ctx: Context, number: String): Found? {
-        if (!ctx.granted(android.Manifest.permission.READ_CONTACTS)) return null
+        if (!ctx.granted(Manifest.permission.READ_CONTACTS)) return null
         return try {
             val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
             ctx.contentResolver.query(

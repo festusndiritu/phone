@@ -58,8 +58,6 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -282,20 +280,17 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
     val selected = remember { mutableStateListOf<Long>() }
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
-    var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf<Long?>(null) }
     fun exitSelection() { selecting = false; selected.clear() }
-    fun closeSearch() { searching = false; query = "" }
     // Un-selecting the last row ends selection, like every system list does.
     fun toggle(id: Long) { if (id in selected) selected.remove(id) else selected.add(id); if (selected.isEmpty()) exitSelection() }
-    BackHandler(enabled = searching) { closeSearch() }
+    BackHandler(enabled = query.isNotEmpty() && !selecting) { query = "" }
     BackHandler(enabled = selecting) { exitSelection() }
 
     val model = (recents as? Load.Ready)?.data
-    val shown = remember(model, query, searching) {
-        if (model == null) emptyList() else if (searching) model.items.matching(query) else model.items
-    }
+    val shown = remember(model, query) { model?.items?.matching(query) ?: emptyList() }
     val groups = remember(shown) { shown.filterIsInstance<RItem.Group>() }
     fun selectAll() { selected.clear(); selected.addAll(groups.map { it.first.id }) }
     DisposableEffect(selecting) { vm.selectionActive.value = selecting; onDispose { vm.selectionActive.value = false } }
@@ -313,30 +308,29 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                     IconAction(Icons.Rounded.Delete, "Delete", { confirmDelete = true })
                 }
             }
-            searching -> Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconAction(Icons.AutoMirrored.Rounded.ArrowBack, "Close search", { closeSearch() })
-                SearchField(value = query, onChange = { query = it; exitSelection() }, placeholder = "Search recents", autoFocus = true, modifier = Modifier.weight(1f))
-            }
             else -> ScreenTitle("Recents", trailing = {
-                if (model?.logEmpty == false) {
-                    IconAction(Icons.Rounded.Search, "Search recents", { searching = true })
-                    Box {
-                        IconAction(Icons.Rounded.MoreVert, "More options", { menu = true })
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.background(c.surfaceHigh)) {
-                            DropdownMenuItem(
-                                text = { Text("Select all", color = c.ink) }, enabled = groups.isNotEmpty(),
-                                leadingIcon = { Icon(Icons.Rounded.Checklist, null, tint = c.inkDim) },
-                                onClick = { menu = false; selecting = true; selectAll() })
-                            DropdownMenuItem(
-                                text = { Text("Clear call log", color = c.decline) },
-                                leadingIcon = { Icon(Icons.Rounded.DeleteSweep, null, tint = c.decline) },
-                                onClick = { menu = false; confirmClear = true })
-                        }
+                if (model?.logEmpty == false) Box {
+                    IconAction(Icons.Rounded.MoreVert, "More options", { menu = true })
+                    PopMenu(menu, { menu = false }) {
+                        PopItem("Select all", { menu = false; selecting = true; selectAll() }, Icons.Rounded.Checklist, enabled = groups.isNotEmpty())
+                        PopItem("Clear call log", { menu = false; confirmClear = true }, Icons.Rounded.DeleteSweep, danger = true)
                     }
                 }
             })
         }
-        if (showFavorites && favorites.isNotEmpty() && !selecting && !searching) FavoritesRow(favorites, onCall = { actions.call(it.phones.first().number) }, onOpen = { vm.detailContact.value = it })
+        // Search is always there, like in Contacts; the call-type filter lives inside it.
+        if (!selecting && (recents is Load.Loading || model?.logEmpty == false)) SearchField(
+            value = query, onChange = { query = it }, placeholder = "Search recents",
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
+            trailing = {
+                FilterButton(filter != 0, "Filter calls") { dismiss ->
+                    listOf("All calls", "Missed", "Incoming", "Outgoing").forEachIndexed { i, label ->
+                        PopItem(label, { dismiss(); vm.logFilter.value = i }, selected = filter == i)
+                    }
+                }
+            }
+        )
+        if (showFavorites && favorites.isNotEmpty() && !selecting && query.isBlank()) FavoritesRow(favorites, onCall = { actions.call(it.phones.first().number) }, onOpen = { vm.detailContact.value = it })
         when (val s = recents) {
             Load.Loading -> ListSkeleton()
             Load.Denied -> StateMessage(Icons.Rounded.History, "See your recent calls",
@@ -345,14 +339,10 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
             is Load.Ready -> if (s.data.logEmpty) {
                 StateMessage(Icons.Rounded.History, "No calls yet")
             } else {
-                Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip("All", filter == 0, { vm.logFilter.value = 0; exitSelection() })
-                    FilterChip("Missed", filter == 1, { vm.logFilter.value = 1; exitSelection() })
-                }
                 val m = s.data
                 if (shown.isEmpty()) {
-                    if (searching && query.isNotBlank()) StateMessage(Icons.Rounded.Search, "No matches")
-                    else StateMessage(Icons.AutoMirrored.Rounded.CallMissed, "No missed calls")
+                    if (query.isNotBlank()) StateMessage(Icons.Rounded.Search, "No matches")
+                    else StateMessage(Icons.AutoMirrored.Rounded.CallMissed, when (filter) { 1 -> "No missed calls"; 2 -> "No incoming calls"; 3 -> "No outgoing calls"; else -> "No calls" })
                 } else LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
                     items(
                         shown,
@@ -366,6 +356,9 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                                 selecting = selecting,
                                 selected = item.first.id in selected,
                                 onOpen = { vm.detailLog.value = item.first },
+                                expanded = expanded == item.first.id && !selecting,
+                                onToggle = { expanded = if (expanded == item.first.id) null else item.first.id },
+                                onAddContact = { actions.addContact(item.first.number) },
                                 onContact = item.contact?.let { ct -> { vm.detailContact.value = ct } },
                                 onCall = { actions.call(item.first.number) },
                                 onSelect = { selecting = true; toggle(item.first.id) })
@@ -390,29 +383,41 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
             confirmClear = false
             vm.clearLog { ok -> if (!ok) Notices.show("Couldn't clear call log") }
             exitSelection()
-            closeSearch()
+            query = ""
         }, onDismiss = { confirmClear = false })
 }
 
-/** Tap the row for details, the avatar for the contact, the phone icon to call back (SIM choice happens in the call flow). Long-press to start selecting. */
+/**
+ * Tap the row for details, the avatar for the contact, the phone icon to call back (SIM choice happens in the call flow). Long-press to start selecting.
+ * Numbers that aren't saved expand in place instead, with Add contact / Block / Details.
+ */
 @Composable
 private fun LogRow(
     g: RItem.Group, reserveSim: Boolean, selecting: Boolean, selected: Boolean,
-    onOpen: () -> Unit, onContact: (() -> Unit)?, onCall: () -> Unit, onSelect: () -> Unit
+    onOpen: () -> Unit, expanded: Boolean, onToggle: () -> Unit, onAddContact: () -> Unit,
+    onContact: (() -> Unit)?, onCall: () -> Unit, onSelect: () -> Unit
 ) {
     val c = LocalColors.current
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val e = g.first
     val contact = g.contact
     val count = g.entries.size
     val missed = e.type == CallLog.Calls.MISSED_TYPE
     val title = g.title
+    val unknown = contact == null && e.number.isNotBlank() && e.presentation == CallLog.Calls.PRESENTATION_ALLOWED
+    var blocked by remember(e.number) { mutableStateOf(false) }
+    LaunchedEffect(expanded) { if (expanded && unknown) blocked = withContext(Dispatchers.IO) { BlockedRepo.isBlocked(ctx, e.number) } }
+    Column(Modifier.fillMaxWidth()
+        .background(if (selected) c.accent.copy(alpha = 0.12f) else Color.Transparent)) {
     Row(
         Modifier.fillMaxWidth()
             .then(
                 if (selecting) Modifier.selectable(selected, role = Role.Checkbox, onClick = onSelect)
-                else Modifier.combinedClickable(onClickLabel = "Call details", onLongClickLabel = "Select", onLongClick = onSelect, onClick = onOpen)
+                else Modifier.combinedClickable(
+                    onClickLabel = if (unknown) (if (expanded) "Collapse" else "Expand") else "Call details",
+                    onLongClickLabel = "Select", onLongClick = onSelect, onClick = if (unknown) onToggle else onOpen)
             )
-            .background(if (selected) c.accent.copy(alpha = 0.12f) else Color.Transparent)
             .padding(start = 20.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -438,6 +443,26 @@ private fun LogRow(
                 Icon(Icons.Rounded.Call, "Call $title", tint = c.accent)
             }
         } else Spacer(Modifier.width(16.dp))
+    }
+    if (unknown) androidx.compose.animation.AnimatedVisibility(visible = expanded) {
+        Row(Modifier.fillMaxWidth().padding(start = 82.dp, end = 16.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextPill("Add contact", onAddContact, filled = true)
+            TextPill(if (blocked) "Unblock" else "Block", {
+                scope.launch {
+                    val ok = withContext(Dispatchers.IO) {
+                        if (!BlockedRepo.canBlock(ctx)) null
+                        else if (blocked) BlockedRepo.unblock(ctx, e.number) else BlockedRepo.block(ctx, e.number)
+                    }
+                    when (ok) {
+                        null -> Notices.show("Set as default phone app to block numbers")
+                        true -> blocked = !blocked
+                        false -> Notices.show("Couldn't update block list")
+                    }
+                }
+            }, danger = !blocked)
+            TextPill("Details", onOpen)
+        }
+    }
     }
 }
 
@@ -539,6 +564,22 @@ private fun PhoneRow(p: ContactPhone, highlight: Boolean, actions: Actions) {
     }
 }
 
+/** Cycles Default → each SIM for these numbers. Only shown on dual-SIM phones. */
+@Composable
+private fun SimPrefPill(numbers: List<String>) {
+    val ctx = LocalContext.current
+    val sims = remember { SimLabels.accounts(ctx) }
+    if (sims.size < 2 || numbers.isEmpty()) return
+    var key by remember(numbers) { mutableStateOf(Prefs.simFor(numbers.first())) }
+    val label = sims.firstOrNull { SimLabels.key(it) == key }?.let { SimLabels.label(ctx, it) ?: "SIM" } ?: "Default"
+    TextPill("Call from: $label", {
+        val opts = listOf<String?>(null) + sims.map { SimLabels.key(it) }
+        val next = opts[(opts.indexOf(key) + 1).mod(opts.size)]
+        numbers.forEach { Prefs.setSimFor(it, next) }
+        key = next
+    })
+}
+
 @Composable
 fun CallDetailScreen(vm: DialerViewModel, actions: Actions, e: LogEntry, contact: Contact?) {
     val c = LocalColors.current
@@ -612,6 +653,8 @@ fun CallDetailScreen(vm: DialerViewModel, actions: Actions, e: LogEntry, contact
                         }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                SimPrefPill(listOf(number))
             }
             val phones = contact?.phones.orEmpty()
             if (phones.size > 1) {
@@ -762,6 +805,8 @@ fun ContactDetailScreen(vm: DialerViewModel, actions: Actions, ct: Contact) {
             Spacer(Modifier.height(8.dp))
             ct.phones.forEach { p -> PhoneRow(p, false, actions) }
             Spacer(Modifier.height(20.dp))
+            SimPrefPill(ct.phones.map { it.number })
+            Spacer(Modifier.height(8.dp))
             TextPill("Edit contact", { actions.openContact(ct) })
         }
     }
@@ -824,6 +869,7 @@ private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (Strin
     val tones by Prefs.keypadTones.collectAsState()
     val dialState by vm.dial.collectAsState()
     val lastDialed by vm.lastDialed.collectAsState()
+    val index by vm.index.collectAsState()
     val tick = rememberTick()
     val gen = remember { try { ToneGenerator(AudioManager.STREAM_DTMF, 70) } catch (e: Exception) { Diag.fail("tone_generator", e); null } }
     DisposableEffect(Unit) { onDispose { gen?.release() } }
@@ -858,11 +904,14 @@ private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (Strin
     val key = ((screenH - 360.dp) / 5f).coerceIn(52.dp, 68.dp)
 
     Column(Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            suggestions.forEach { s ->
-                Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.surface).clickable { onCall(s.phones.first().number) }.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                    Text(s.name, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 100.dp))
-                    Text(s.phones.first().number, color = c.inkDim, fontSize = 11.sp, maxLines = 1)
+        // Only exists once there are matches (two or more digits typed); the sheet is anchored at the bottom, so the keypad doesn't move.
+        androidx.compose.animation.AnimatedVisibility(visible = suggestions.isNotEmpty()) {
+            Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                suggestions.forEach { s ->
+                    Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.surface).clickable { onCall(s.phones.first().number) }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Text(s.name, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 100.dp))
+                        Text(s.phones.first().number, color = c.inkDim, fontSize = 11.sp, maxLines = 1)
+                    }
                 }
             }
         }
@@ -876,7 +925,7 @@ private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (Strin
                 singleLine = true,
                 textStyle = TextStyle(color = c.ink, fontSize = size, fontWeight = FontWeight.Light, textAlign = TextAlign.Center),
                 cursorBrush = SolidColor(c.accent),
-                modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 24.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 24.dp),
                 decorationBox = { inner ->
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         if (number.isEmpty()) Text("", color = c.inkDim, fontSize = 20.sp)
@@ -885,14 +934,20 @@ private fun DialpadContent(vm: DialerViewModel, actions: Actions, onCall: (Strin
                 }
             )
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(6.dp))
         Keypad(key, onKey = { ch ->
             insert(ch)
             if (tones) gen?.startTone(toneFor(ch), 120)
         }, onLongZero = { insert('+') })
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(22.dp), verticalAlignment = Alignment.CenterVertically) {
-            Spacer(Modifier.size(key))
+            Box(Modifier.size(key), contentAlignment = Alignment.Center) {
+                // A typed number that isn't saved yet can be saved from here.
+                if (number.count { it.isDigit() } >= 3 && index.find(number) == null) Box(
+                    Modifier.size(56.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Save number") { actions.addContact(number) },
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Rounded.PersonAdd, "Save number", tint = c.inkDim) }
+            }
             // With nothing typed, the call button pastes the last number you dialed (press again to call it).
             RoundButton(Icons.Rounded.Call, if (number.isBlank()) "Fill last dialed number" else "Call", c.answer, Color.White, key,
                 enabled = number.isNotBlank() || lastDialed != null) {

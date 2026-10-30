@@ -72,7 +72,9 @@ data class CallInfo(
     /** Carrier says this call can be switched to video (Google Phone's "video call" button). */
     val canVideo: Boolean = false,
     /** Video state the other side asked to switch to; 0 = no pending request. */
-    val videoRequest: Int = 0
+    val videoRequest: Int = 0,
+    /** Why an outgoing call that never connected ended (Busy, Declined, No answer...); null = use [endText]. */
+    val endLabel: String? = null
 ) {
     val isVideo get() = VideoProfile.isVideo(videoState)
     val sendingVideo get() = VideoProfile.isTransmissionEnabled(videoState)
@@ -146,6 +148,8 @@ object CallManager {
     private val idOf = HashMap<Call, Int>()
     private val callbacks = HashMap<Int, Call.Callback>()
     private val incoming = HashMap<Int, Boolean>()
+    private val dialAt = HashMap<Int, Long>()
+    private val buzzed = HashSet<Int>()
     private val resolved = HashMap<Int, Resolved>()
     private val resolvedFor = HashMap<Int, String>()
     private val simLabels = HashMap<Int, String>()
@@ -200,6 +204,7 @@ object CallManager {
         refs[id] = call
         val st = stateOf(call)
         incoming[id] = st == Call.STATE_RINGING
+        if (st != Call.STATE_RINGING) dialAt[id] = SystemClock.elapsedRealtime()
         Diag.log("call_added", id, "state=${stateName(st)}")
         val cb = Cb(id)
         callbacks[id] = cb
@@ -246,13 +251,16 @@ object CallManager {
                 }
             }
         }
+        if (snap.parentId == null && !snap.incoming && snap.endLabel in setOf("Busy", "No answer", "Declined")) {
+            appCtx?.let { CallNotifications.unanswered(it, snap) }
+        }
         if (snap.parentId == null) {
             lingering[id] = snap.copy(state = Call.STATE_DISCONNECTED, childIds = emptyList(), sims = emptyList())
             publish()
             scope.launch {
                 delay(1200.milliseconds) // brief "Call ended / Busy / Declined" feedback, then the screen goes away
                 lingering.remove(id)
-                resolved.remove(id); resolvedFor.remove(id); incoming.remove(id); simLabels.remove(id); simHandleFor.remove(id)
+                resolved.remove(id); resolvedFor.remove(id); incoming.remove(id); dialAt.remove(id); buzzed.remove(id); simLabels.remove(id); simHandleFor.remove(id)
                 publish()
             }
         } else publish()
@@ -265,6 +273,7 @@ object CallManager {
                 val dc = call.details.disconnectCause
                 Diag.log("end_cause", id, "code=${dc?.code} reason=${dc?.reason?.take(48)} sinceVideoReq=${videoReqAt[id]?.let { SystemClock.elapsedRealtime() - it } ?: -1}ms")
             }
+            if (state == Call.STATE_ACTIVE && incoming[id] == false && Prefs.vibrateOnAnswer.value && buzzed.add(id)) buzz()
             if (state == Call.STATE_ACTIVE) Diag.log("video_caps", id, "canUpgrade=${call.canUpgradeToVideo()} caps=${call.details.callCapabilities} videoState=${call.details.videoState} hasVideoCall=${call.videoCall != null}")
             syncVideo(id, call)
             publish()
@@ -306,8 +315,45 @@ object CallManager {
             sim = simLabels[id],
             videoState = d.videoState,
             canVideo = call.canUpgradeToVideo(),
-            videoRequest = upgradeAsk[id] ?: 0
+            videoRequest = upgradeAsk[id] ?: 0,
+            endLabel = if (st == Call.STATE_DISCONNECTED) outgoingEndLabel(id, d) else null
         )
+    }
+
+    /** Two short pulses when the other side picks up, so you can take the phone off your ear and wait. */
+    private fun buzz() {
+        val ctx = appCtx ?: return
+        try {
+            ctx.getSystemService(android.os.Vibrator::class.java)
+                ?.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(0, 130, 90, 130), -1))
+        } catch (e: Exception) { Diag.fail("vibrate_on_answer", e) }
+    }
+
+    /**
+     * Telecom reports most "nobody picked up" endings as a generic error. For outgoing calls that never connected, tell
+     * busy / declined / no answer / unreachable apart using the cause code, the reason string and how long it rang.
+     * What the network signals varies by carrier, so unknown endings fall back to [endText].
+     */
+    private fun outgoingEndLabel(id: Int, d: Call.Details): String? {
+        if (incoming[id] != false || d.connectTimeMillis > 0) return null
+        val dc = d.disconnectCause ?: return null
+        if (dc.code == DisconnectCause.LOCAL || dc.code == DisconnectCause.CANCELED) return null
+        val r = dc.reason.orEmpty().uppercase()
+        val waited = dialAt[id]?.let { SystemClock.elapsedRealtime() - it } ?: 0L
+        fun has(vararg k: String) = k.any { it in r }
+        return when {
+            dc.code == DisconnectCause.BUSY || has("BUSY") && !has("CONGESTION") -> "Busy"
+            dc.code == DisconnectCause.REJECTED || has("REJECT", "DECLINE") -> "Declined"
+            has("NUMBER_UNREACHABLE", "POWER_OFF") -> "Not reachable"
+            has("INVALID_NUMBER", "UNOBTAINABLE") -> "Invalid number"
+            has("OUT_OF_SERVICE", "OUT_OF_NETWORK", "LOST_SIGNAL", "SERVER_UNREACHABLE") -> "No signal"
+            has("CONGESTION", "LIMIT_EXCEEDED") -> "Network busy"
+            has("NO_ANSWER", "NO_USER", "TIMED_OUT", "ALERTING") -> "No answer"
+            // Seen on this phone: ringing out ends TIMED_OUT (~30s); the other side ending it first is a normal release.
+            dc.code == DisconnectCause.REMOTE && has("NORMAL") && waited >= 4_000 -> "Declined"
+            (dc.code == DisconnectCause.ERROR || dc.code == DisconnectCause.REMOTE || dc.code == DisconnectCause.UNKNOWN || dc.code == DisconnectCause.OTHER) && waited >= 10_000 -> "No answer"
+            else -> null
+        }
     }
 
     private fun lookup(id: Int, call: Call) {
@@ -485,7 +531,10 @@ object CallManager {
     }
 
     fun answer(id: Int) { Diag.log("answer_tapped", id); refs[id]?.answer(VideoProfile.STATE_AUDIO_ONLY) }
-    fun reject(id: Int) { Diag.log("decline_tapped", id); refs[id]?.reject(false, null) }
+    fun reject(id: Int, text: String? = null) {
+        Diag.log("decline_tapped", id, if (text != null) "with_message" else "")
+        refs[id]?.reject(text != null, text) // Telecom sends the SMS itself, so no SMS permission is needed here
+    }
     fun rejectRinging(source: String) {
         ringing()?.let { Diag.log("decline_source", it.id, "source=$source"); reject(it.id) }
     }
@@ -589,6 +638,15 @@ object CallNotifications {
     private const val CH_ONGOING = "ongoing_call_v1"
     private const val CH_MISSED = "missed_call_v1"
     private const val ID_MISSED = 4103
+    private const val CH_FOLLOWUP = "unanswered_call_v1"
+    private const val CH_REMIND = "call_reminder_v1"
+    private const val ID_FOLLOWUP = 4104
+    private const val ID_REMIND = 4105
+    const val ACTION_SNOOZE = "dev.mizzenmast.dialer.SNOOZE"
+    const val ACTION_REMIND = "dev.mizzenmast.dialer.REMIND"
+    const val EXTRA_NUMBER = "number"
+    const val EXTRA_TITLE = "title"
+    const val EXTRA_NID = "nid"
     const val ACTION_CLEAR_MISSED = "dev.mizzenmast.dialer.CLEAR_MISSED"
     private val missedCount = HashMap<String, Int>()
     private const val ID_INCOMING = 4101
@@ -645,6 +703,16 @@ object CallNotifications {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             })
         }
+        if (nm.getNotificationChannel(CH_FOLLOWUP) == null) {
+            nm.createNotificationChannel(NotificationChannel(CH_FOLLOWUP, "Unanswered calls", NotificationManager.IMPORTANCE_LOW).apply {
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            })
+        }
+        if (nm.getNotificationChannel(CH_REMIND) == null) {
+            nm.createNotificationChannel(NotificationChannel(CH_REMIND, "Call reminders", NotificationManager.IMPORTANCE_HIGH).apply {
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            })
+        }
         if (nm.getNotificationChannel(CH_MISSED) == null) {
             nm.createNotificationChannel(NotificationChannel(CH_MISSED, "Missed calls", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 setShowBadge(true)
@@ -685,16 +753,73 @@ object CallNotifications {
             .setAutoCancel(true)
             .setWhen(System.currentTimeMillis())
         if (c.number != null && c.presentation == TelecomManager.PRESENTATION_ALLOWED) {
-            val callBack = PendingIntent.getActivity(ctx, 32,
-                Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_CALL, c.number).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP), FLAGS)
-            val sms = PendingIntent.getActivity(ctx, 33, Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", c.number, null)), FLAGS)
-            b.addAction(R.drawable.ic_call_notification, "Call back", callBack)
-            b.addAction(R.drawable.ic_call_notification, "Message", sms)
+            b.addAction(R.drawable.ic_call_notification, "Call back", callPi(ctx, 32, c.number))
+            b.addAction(R.drawable.ic_call_notification, "Message", PendingIntent.getActivity(ctx, 33, Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", c.number, null)), FLAGS))
+            b.addAction(R.drawable.ic_call_notification, "Remind in 1h", snoozePi(ctx, c.number, c.title(), ID_MISSED))
         }
         try {
             nm.notify(key, ID_MISSED, b.build())
             Diag.log("notif_posted", c.id, "kind=missed")
         } catch (e: SecurityException) { Diag.fail("missed_notify", e, c.id) }
+    }
+
+    /** Quiet follow-up after an outgoing call that went unanswered, with one-tap redial and a reminder. */
+    fun unanswered(ctx: Context, c: CallInfo) {
+        val number = c.number?.takeIf { it.isNotBlank() } ?: return
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannels(nm)
+        val b = NotificationCompat.Builder(ctx, CH_FOLLOWUP)
+            .setSmallIcon(R.drawable.ic_call_notification)
+            .setContentTitle(c.title())
+            .setContentText(c.endLabel)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setAutoCancel(true)
+            .setTimeoutAfter(10 * 60 * 1000L)
+            .addAction(R.drawable.ic_call_notification, "Call again", callPi(ctx, 34, number))
+            .addAction(R.drawable.ic_call_notification, "Remind in 1h", snoozePi(ctx, number, c.title(), ID_FOLLOWUP))
+            .setContentIntent(callPi(ctx, 35, number))
+        try { nm.notify(number, ID_FOLLOWUP, b.build()) } catch (e: SecurityException) { Diag.fail("followup_notify", e, c.id) }
+    }
+
+    /** Unique per number (via the data URI) so notifications for different people never share extras. */
+    private fun callPi(ctx: Context, rc: Int, number: String) = PendingIntent.getActivity(ctx, rc,
+        Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_CALL, number).setData(Uri.fromParts("tel", number, "r$rc"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP), FLAGS)
+
+    private fun snoozePi(ctx: Context, number: String, title: String, notifId: Int) = PendingIntent.getBroadcast(ctx, 36,
+        Intent(ctx, CallActionReceiver::class.java).setAction(ACTION_SNOOZE).setData(Uri.fromParts("tel", number, "n$notifId"))
+            .putExtra(EXTRA_NUMBER, number).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_NID, notifId), FLAGS)
+
+    /** One hour from now. Inexact on purpose: no exact-alarm permission, and a few minutes of Doze slack is fine for a reminder. */
+    fun snooze(ctx: Context, number: String, title: String, notifId: Int) {
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        nm?.cancel(missedKey(number), notifId)
+        missedCount.remove(missedKey(number))
+        val at = System.currentTimeMillis() + 60 * 60 * 1000L
+        val pi = PendingIntent.getBroadcast(ctx, 37,
+            Intent(ctx, CallActionReceiver::class.java).setAction(ACTION_REMIND).setData(Uri.fromParts("tel", number, "remind"))
+                .putExtra(EXTRA_NUMBER, number).putExtra(EXTRA_TITLE, title), FLAGS)
+        try { ctx.getSystemService(android.app.AlarmManager::class.java)?.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, at, pi) }
+        catch (e: Exception) { Diag.fail("snooze", e) }
+        Diag.log("reminder_set")
+    }
+
+    private fun missedKey(number: String) = number.takeIf { it.isNotBlank() } ?: "unknown"
+
+    fun remind(ctx: Context, number: String, title: String) {
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannels(nm)
+        val b = NotificationCompat.Builder(ctx, CH_REMIND)
+            .setSmallIcon(R.drawable.ic_call_notification)
+            .setContentTitle("Call back $title")
+            .setContentText("Reminder")
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setAutoCancel(true)
+            .setContentIntent(callPi(ctx, 38, number))
+            .addAction(R.drawable.ic_call_notification, "Call", callPi(ctx, 39, number))
+        try { nm.notify(number, ID_REMIND, b.build()) } catch (e: SecurityException) { Diag.fail("remind_notify", e) }
     }
 
     /** Dismisses our missed-call notifications, and the system's own copy if it posted one. */
@@ -839,6 +964,14 @@ class CallActionReceiver : BroadcastReceiver() {
             CallNotifications.ACTION_DECLINE -> CallManager.rejectRinging("notification")
             CallNotifications.ACTION_HANGUP -> CallManager.endPrimary()
             CallNotifications.ACTION_CLEAR_MISSED -> CallNotifications.clearMissed(ctx)
+            CallNotifications.ACTION_SNOOZE -> {
+                val n = intent.getStringExtra(CallNotifications.EXTRA_NUMBER) ?: return
+                CallNotifications.snooze(ctx, n, intent.getStringExtra(CallNotifications.EXTRA_TITLE) ?: n, intent.getIntExtra(CallNotifications.EXTRA_NID, 0))
+            }
+            CallNotifications.ACTION_REMIND -> {
+                val n = intent.getStringExtra(CallNotifications.EXTRA_NUMBER) ?: return
+                CallNotifications.remind(ctx, n, intent.getStringExtra(CallNotifications.EXTRA_TITLE) ?: n)
+            }
         }
     }
 }

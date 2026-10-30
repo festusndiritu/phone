@@ -49,6 +49,10 @@ object Prefs {
     val diagnostics = MutableStateFlow(true)
     val showFavorites = MutableStateFlow(true)
     val silenceUnknown = MutableStateFlow(false)
+    val vibrateOnAnswer = MutableStateFlow(true)
+    val replyViaWhatsApp = MutableStateFlow(false)
+    /** Contacts filter, persisted: "all", "fav" or "src:<where it's saved>". */
+    val contactFilter = MutableStateFlow("all")
 
     @Synchronized
     fun init(dp: Context) {
@@ -63,11 +67,30 @@ object Prefs {
         diagnostics.value = p.getBoolean("diagnostics", true)
         showFavorites.value = p.getBoolean("show_favorites_row", true)
         silenceUnknown.value = p.getBoolean("silence_unknown", false)
+        vibrateOnAnswer.value = p.getBoolean("vibrate_on_answer", true)
+        replyViaWhatsApp.value = p.getBoolean("reply_whatsapp", false)
+        contactFilter.value = p.getString("contact_filter", "all") ?: "all"
     }
 
-    fun setTheme(v: Int) { theme.value = v; sp?.edit()?.putInt("theme", v)?.apply() }
+    fun setContactFilter(v: String) {
+        contactFilter.value = v
+        sp?.edit()?.putString("contact_filter", v)?.apply()
+    }
+    fun setTheme(v: Int) {
+        theme.value = v
+        sp?.edit()?.putInt("theme", v)?.apply()
+    }
     fun set(key: String, flow: MutableStateFlow<Boolean>, v: Boolean) {
-        flow.value = v; sp?.edit()?.putBoolean(key, v)?.apply()
+        flow.value = v
+        sp?.edit()?.putBoolean(key, v)?.apply()
+    }
+
+    private fun numKey(number: String) = number.filter(Char::isDigit).takeLast(9).takeIf { it.isNotEmpty() }
+    /** SIM account key (see [SimLabels.key]) this number should always be called from, or null for the system default. */
+    fun simFor(number: String): String? = numKey(number)?.let { sp?.getString("sim_$it", null) }
+    fun setSimFor(number: String, key: String?) {
+        val k = numKey(number) ?: return
+        sp?.edit { if (key == null) remove("sim_$k") else putString("sim_$k", key) }
     }
 
     /** Persisted so call ids stay unique across process restarts (diagnostic log is persisted). */
