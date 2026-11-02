@@ -1,6 +1,5 @@
 package dev.mizzenmast.dialer
 
-import android.Manifest
 import android.app.Activity
 import android.app.NotificationManager
 import android.content.Context
@@ -81,7 +80,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -91,25 +89,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 
-/** What the app has been allowed to do. Read fresh whenever [DialerViewModel.tick] changes (resume, permission results, role result). */
+/** What the app has been allowed to do. Read fresh by [DialerViewModel.onPermissionsChanged] (resume, permission results, role result). */
 @Immutable
-class Setup(
+data class Setup(
     val isDefault: Boolean, val contacts: Boolean, val callLog: Boolean, val phone: Boolean,
-    val notif: Boolean, val fsi: Boolean, val overlay: Boolean, val battery: Boolean
+    val notif: Boolean, val fsi: Boolean, val battery: Boolean
 ) {
     /** The parts the app can't do its job without (being the phone app, placing calls, call alerts); until they are all granted only setup is shown.
-     *  Contacts, call history and full-screen alerts are asked for here but can be skipped: Contacts and Recents offer "Allow access" when opened. Overlay and battery live in Settings. */
+     *  Contacts, call history and full-screen alerts are asked for here but can be skipped: Contacts and Recents offer "Allow access" when opened. Battery optimization lives in Settings. */
     val essentials: Boolean get() = isDefault && phone && notif
 }
 
 fun readSetup(ctx: Context) = Setup(
     isDefault = roleHeld(ctx),
-    contacts = ctx.granted(Manifest.permission.READ_CONTACTS),
-    callLog = ctx.granted(Manifest.permission.READ_CALL_LOG) && ctx.granted(Manifest.permission.WRITE_CALL_LOG),
-    phone = PHONE_PERMS.all { ctx.granted(it) },
-    notif = Build.VERSION.SDK_INT < 33 || ctx.granted(Manifest.permission.POST_NOTIFICATIONS),
+    contacts = Feature.Contacts.granted(ctx),
+    callLog = Feature.CallLog.granted(ctx),
+    phone = Feature.Phone.granted(ctx),
+    notif = Feature.Notifications.granted(ctx),
     fsi = Build.VERSION.SDK_INT < 34 || ctx.getSystemService(NotificationManager::class.java).canUseFullScreenIntent(),
-    overlay = Settings.canDrawOverlays(ctx),
     battery = ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName)
 )
 private enum class Step { Welcome, Overview, Default, Contacts, History, Notifications, FullScreen, Battery, Appearance, Done }
@@ -185,9 +182,7 @@ private fun specFor(st: Step, s: Setup, a: Actions): Spec = when (st) {
 @Composable
 fun OnboardingScreen(vm: DialerViewModel, actions: Actions) {
     val c = LocalColors.current
-    val ctx = LocalContext.current
-    val tick by vm.tick.collectAsState()
-    val s = remember(tick) { readSetup(ctx) }
+    val s by vm.setup.collectAsState()
     // Someone who finished setup earlier and later lost an essential lands on the list, with no splash to go back to.
     val returning = remember { Prefs.onboarded.value }
     var current by rememberSaveable { mutableIntStateOf(if (returning) Step.Overview.ordinal else Step.Welcome.ordinal) }
@@ -293,7 +288,7 @@ fun OnboardingScreen(vm: DialerViewModel, actions: Actions) {
                     SetupPage(
                         top = { BackTop(::back) },
                         primary = if (ready) "Continue to dialer" else "Finish setup",
-                        onPrimary = { if (ready) Prefs.setOnboarded(true) else proceed() },
+                        onPrimary = { if (ready) vm.finishSetup() else proceed() },
                         secondary = "Open settings", onSecondary = { actions.open(SettingsTarget.AppDetails) }
                     ) {
                         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -359,8 +354,6 @@ fun OnboardingScreen(vm: DialerViewModel, actions: Actions) {
         }
     }
 }
-
-// ---- Layout pieces -------------------------------------------------------------------------------------------------
 
 /** Top bar, scrolling content, and the pinned actions. Every page except the welcome screen is built on this. */
 @Composable
@@ -516,8 +509,6 @@ private fun SummaryCard(rows: List<Pair<String, Boolean>>) {
     }
 }
 
-// ---- Welcome -------------------------------------------------------------------------------------------------------
-
 /** Always dark, whatever the app theme is, so the system bar icons are forced light while it is on screen. */
 @Composable
 private fun WelcomeScreen(onStart: () -> Unit) {
@@ -578,8 +569,6 @@ private fun WelcomeScreen(onStart: () -> Unit) {
         }
     }
 }
-
-// ---- Illustrations (drawn from theme colors so they follow light and dark) ---------------------------------------
 
 @Composable
 private fun ArtBox(height: Dp = 176.dp, content: @Composable BoxScope.() -> Unit) {

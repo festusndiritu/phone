@@ -159,7 +159,7 @@ fun Avatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifie
     val bmp by produceState<Bitmap?>(null, photo) { value = if (photo != null) Photos.load(ctx, photo) else null }
     val ini = initialsOf(name)
     val dark = c.bg.luminance() < 0.5f
-    val hue = remember(name) { ((name?.hashCode() ?: 0).toLong().let { if (it < 0) -it else it } % 360).toFloat() }
+    val hue = remember(name) { (abs(name.hashCode().toLong()) % 360).toFloat() }
     val tint = if (ini.isEmpty()) c.surfaceHigh else if (dark) Color.hsv(hue, 0.45f, 0.36f) else Color.hsv(hue, 0.22f, 0.93f)
     val ink = if (dark) Color.hsv(hue, 0.25f, 0.96f) else Color.hsv(hue, 0.65f, 0.34f)
     // [green]: every initial circle in the accent hue (contact cards) instead of a per-name color.
@@ -389,13 +389,19 @@ fun ScreenTitle(text: String, subtitle: String? = null, trailing: (@Composable (
 fun Toggle(checked: Boolean, onChange: ((Boolean) -> Unit)?) {
     val c = LocalColors.current
     val x by animateDpAsState(if (checked) 22.dp else 2.dp, label = "toggle")
-    val onTrack = if (c.bg.luminance() < 0.5f) lerp(c.bg, c.accent, 0.65f) else c.accent // softer on dark, like the settings mockup
+    val onTrack = if (c.bg.luminance() < 0.5f) lerp(c.bg, c.accent, 0.65f) else c.accent // softer on dark
     val track by animateColorAsState(if (checked) onTrack else c.surfaceHigh, label = "toggleTrack")
     Box(
         Modifier.size(48.dp, 28.dp).clip(RoundedCornerShape(14.dp)).background(track)
             .then(if (onChange != null) Modifier.toggleable(checked, role = Role.Switch, onValueChange = onChange) else Modifier)
     ) {
-        Box(Modifier.offset(x, 2.dp).size(24.dp).clip(CircleShape).background(if (checked) Color.White else c.inkDim))
+        Box(
+            Modifier
+                .offset { IntOffset(x.roundToPx(), 2.dp.roundToPx()) }
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(if (checked) Color.White else c.inkDim)
+        )
     }
 }
 
@@ -502,9 +508,6 @@ fun ConfirmDialog(title: String, body: String?, confirm: String, onConfirm: () -
     }
 }
 
-/** Number of destinations in [BottomBar]. The raised keypad button only looks right in the middle of 5; below that it's a [DialerFab]. */
-const val BOTTOM_DESTINATIONS = 3
-
 @Composable
 fun DialerFab(modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = LocalColors.current
@@ -515,33 +518,51 @@ fun DialerFab(modifier: Modifier = Modifier, onClick: () -> Unit) {
     ) { Icon(Icons.Rounded.Dialpad, "Keypad", tint = c.onAccent, modifier = Modifier.size(28.dp)) }
 }
 
-/**
- * The destinations. With 5 of them the keypad button sits raised in the middle slot (it isn't a destination itself);
- * with fewer, the bar is just the tabs and the keypad opener is a [DialerFab] over the content.
- */
 @Composable
-fun BottomBar(selected: Int, onSelect: (Int) -> Unit, onDial: () -> Unit) {
+fun BottomBar(selected: Int, onSelect: (Int) -> Unit) {
     val c = LocalColors.current
-    val tabs = listOf(Icons.Rounded.History to "Recents", Icons.Rounded.Contacts to "Contacts", Icons.Rounded.Settings to "Settings")
-    val raisedMiddle = tabs.size >= 5
-    Column(Modifier.fillMaxWidth().background(c.surface).navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(if (raisedMiddle) 72.dp else 64.dp), verticalAlignment = Alignment.CenterVertically) {
+    val tabs = listOf(
+        Icons.Rounded.History to "Recents",
+        Icons.Rounded.Contacts to "Contacts",
+        Icons.Rounded.Settings to "Settings"
+    )
+
+    Column(
+        Modifier.fillMaxWidth()
+            .background(c.surface)
+            .navigationBarsPadding()
+    ) {
+        Row(
+            Modifier.fillMaxWidth().height(64.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             tabs.forEachIndexed { i, (icon, label) ->
-                if (raisedMiddle && i == tabs.size / 2) Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                    Box(
-                        Modifier.offset(y = (-6).dp).size(56.dp).shadow(6.dp, CircleShape).clip(CircleShape).background(c.accent)
-                            .clickable(role = Role.Button, onClickLabel = "Open keypad", onClick = onDial),
-                        contentAlignment = Alignment.Center
-                    ) { Icon(Icons.Rounded.Dialpad, "Keypad", tint = c.onAccent, modifier = Modifier.size(26.dp)) }
-                }
                 val on = i == selected
+
                 Column(
-                    Modifier.weight(1f).fillMaxHeight().selectable(on, role = Role.Tab, onClick = { onSelect(i) }),
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
+                    Modifier.weight(1f)
+                        .fillMaxHeight()
+                        .selectable(
+                            selected = on,
+                            role = Role.Tab,
+                            onClick = { onSelect(i) }
+                        ),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(icon, null, tint = if (on) c.accent else c.inkDim, modifier = Modifier.size(24.dp))
+                    Icon(
+                        icon,
+                        null,
+                        tint = if (on) c.accent else c.inkDim,
+                        modifier = Modifier.size(24.dp)
+                    )
                     Spacer(Modifier.height(4.dp))
-                    Text(label, color = if (on) c.accent else c.inkDim, fontSize = 11.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
+                    Text(
+                        label,
+                        color = if (on) c.accent else c.inkDim,
+                        fontSize = 11.sp,
+                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal
+                    )
                 }
             }
         }

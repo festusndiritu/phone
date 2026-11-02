@@ -4,19 +4,21 @@ import android.Manifest
 import android.app.Application
 import android.provider.CallLog
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.milliseconds
@@ -41,53 +43,101 @@ sealed interface ContactFilter {
 }
 
 /** One ViewModel for the main app UI. In-call state lives in CallManager (process-wide, owned by the InCallService). */
-class DialerViewModel(app: Application) : AndroidViewModel(app) {
+class DialerViewModel(app: Application, saved: SavedStateHandle) : AndroidViewModel(app) {
     private val ctx get() = getApplication<Application>()
     private companion object { const val FIRST_PAGE = 60 }
 
-    val tab = MutableStateFlow(0)
-    val dial = MutableStateFlow("")
-    val dialerOpen = MutableStateFlow(false)
-    val logFilter = MutableStateFlow(0) // 0 all, 1 missed, 2 incoming, 3 outgoing
+    private val _tab = MutableStateFlow<Int>(0)
+    val tab: StateFlow<Int> = _tab.asStateFlow()
+    private val _dial = MutableStateFlow<String>("")
+    val dial: StateFlow<String> = _dial.asStateFlow()
+    private val _dialerOpen = MutableStateFlow<Boolean>(false)
+    val dialerOpen: StateFlow<Boolean> = _dialerOpen.asStateFlow()
+    private val _logFilter = MutableStateFlow<Int>(0) // 0 all, 1 missed, 2 incoming, 3 outgoing
+    val logFilter: StateFlow<Int> = _logFilter.asStateFlow()
     /** Number waiting for the user to choose a SIM (set only when Android has no default calling SIM). */
-    val simPicker = MutableStateFlow<Pair<String, List<SimOption>>?>(null)
-    val query = MutableStateFlow("")
-    val detailLog = MutableStateFlow<LogEntry?>(null)
+    private val _simPicker = MutableStateFlow<Pair<String, List<SimOption>>?>(null)
+    val simPicker: StateFlow<Pair<String, List<SimOption>>?> = _simPicker.asStateFlow()
+    private val _query = MutableStateFlow<String>("")
+    val query: StateFlow<String> = _query.asStateFlow()
+    private val _detailLog = MutableStateFlow<LogEntry?>(null)
+    val detailLog: StateFlow<LogEntry?> = _detailLog.asStateFlow()
     /** Entry whose full call history is open (same person/number as [detailLog]). */
-    val historyLog = MutableStateFlow<LogEntry?>(null)
+    private val _historyLog = MutableStateFlow<LogEntry?>(null)
+    val historyLog: StateFlow<LogEntry?> = _historyLog.asStateFlow()
     /** True while a list is showing its contextual selection bar; MainShell tints the status bar to match so the bar reads edge to edge. */
-    val selectionActive = MutableStateFlow(false)
-    val detailContact = MutableStateFlow<Contact?>(null)
-    val tick = MutableStateFlow(0)
-    val contactFilter = MutableStateFlow(ContactFilter.parse(Prefs.contactFilter.value))
-    /** True for a few seconds after "Sync contacts", just to show it's working. */
-    val syncing = MutableStateFlow(false)
+    private val _selectionActive = MutableStateFlow<Boolean>(false)
+    val selectionActive: StateFlow<Boolean> = _selectionActive.asStateFlow()
+    private val _detailContact = MutableStateFlow<Contact?>(null)
+    val detailContact: StateFlow<Contact?> = _detailContact.asStateFlow()
 
-    fun setContactFilter(f: ContactFilter) { contactFilter.value = f; Prefs.setContactFilter(f.key) }
+    private val _setup = MutableStateFlow(readSetup(ctx))
+    /** What is granted and what is still missing. Re-read by [onPermissionsChanged]; screens just observe it. */
+    val setup: StateFlow<Setup> = _setup
+    /** The main screen is usable once the essentials are granted AND the walkthrough has been finished; losing an essential later brings setup back. */
+    val ready: StateFlow<Boolean> = combine(_setup, Prefs.onboarded) { s, done -> s.essentials && done }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, _setup.value.essentials && Prefs.onboarded.value)
+    /** Permission requests waiting for the system dialog, saved across rotation and process death. */
+    val permissionQueue = PermissionQueue(saved)
+    /** True while the main screen is resumed (in front of the person). */
+    private val _foreground = MutableStateFlow<Boolean>(false)
+    val foreground: StateFlow<Boolean> = _foreground.asStateFlow()
+
+    fun finishSetup() = Prefs.setOnboarded(true)
+
+    fun setDial(number: String) { _dial.value = number }
+    /** Opens the dialpad, optionally with [number] already typed in. */
+    fun openDialer(number: String? = null) {
+        if (number != null) _dial.value = number
+        _dialerOpen.value = true
+    }
+    fun closeDialer() { _dialerOpen.value = false }
+    fun setLogFilter(index: Int) { _logFilter.value = index }
+    fun setQuery(q: String) { _query.value = q }
+    fun showSimPicker(number: String, options: List<SimOption>) { _simPicker.value = number to options }
+    fun dismissSimPicker() { _simPicker.value = null }
+    fun openDetail(e: LogEntry) { _detailLog.value = e }
+    fun closeDetail() { _detailLog.value = null }
+    fun openHistory(e: LogEntry) { _historyLog.value = e }
+    fun closeHistory() { _historyLog.value = null }
+    fun openContactDetail(c: Contact) { _detailContact.value = c }
+    fun closeContactDetail() { _detailContact.value = null }
+    fun setSelectionActive(on: Boolean) { _selectionActive.value = on }
+    fun setForeground(on: Boolean) { _foreground.value = on }
+
+    /** The call list is in front of the person, so the missed calls it shows are seen: take down their notifications. */
+    fun markMissedSeen() = CallNotifications.clearMissed(ctx)
+
+    private val _contactFilter = MutableStateFlow<ContactFilter>(ContactFilter.parse(Prefs.contactFilter.value))
+    val contactFilter: StateFlow<ContactFilter> = _contactFilter.asStateFlow()
+    /** True for a few seconds after "Sync contacts", just to show it's working. */
+    private val _syncing = MutableStateFlow<Boolean>(false)
+    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
+
+    fun setContactFilter(f: ContactFilter) { _contactFilter.value = f; Prefs.setContactFilter(f.key) }
 
     /** Asks the accounts to sync now and reloads what's on the phone. Later changes arrive through the contacts observer. */
     fun syncContacts() {
         if (syncing.value) return
-        syncing.value = true
+        _syncing.value = true
         viewModelScope.launch {
             val n = withContext(Dispatchers.IO) { ContactsRepo.requestSync(ctx) }
             reloadContacts()
             Notices.show(if (n > 0) "Syncing contacts…" else "Contacts refreshed")
             delay(3000.milliseconds)
-            syncing.value = false
+            _syncing.value = false
         }
     }
 
     /** Bottom-tab navigation. Switching tabs always closes the detail screens that sit on top of them. */
     fun selectTab(i: Int) {
-        detailLog.value = null
-        historyLog.value = null
-        detailContact.value = null
-        tab.value = i
+        _detailLog.value = null
+        _historyLog.value = null
+        _detailContact.value = null
+        _tab.value = i
     }
 
     private val _contacts = MutableStateFlow<Load<List<Contact>>>(Load.Loading)
-//    val contacts: StateFlow<Load<List<Contact>>> = _contacts
     private val _log = MutableStateFlow<Load<List<LogEntry>>>(Load.Loading)
     val log: StateFlow<Load<List<LogEntry>>> = _log
 
@@ -167,9 +217,10 @@ class DialerViewModel(app: Application) : AndroidViewModel(app) {
         else { contactJob?.cancel(); contactJob = null; logJob?.cancel(); logJob = null }
     }
 
-    /** Call after any permission/role change and on resume. Starts or stops provider observers accordingly. */
+    /** Call after any permission/role change and on resume. Refreshes [setup] and starts or stops provider observers accordingly. */
     fun onPermissionsChanged() {
-        tick.value += 1
+        PhoneKey.init(ctx)
+        _setup.value = readSetup(ctx)
         if (ctx.granted(Manifest.permission.READ_CONTACTS)) {
             if (active && contactJob == null) contactJob = viewModelScope.launch {
                 ContactsRepo.changes(ctx).conflate().collect { reloadContacts(); delay(500.milliseconds) }

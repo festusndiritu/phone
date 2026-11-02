@@ -12,15 +12,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -110,7 +109,7 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
         })
         SearchField(
             value = q,
-            onChange = { vm.query.value = it },
+            onChange = { vm.setQuery(it) },
             trailing = {
                 FilterButton(active != ContactFilter.All, "Filter contacts") { dismiss ->
                     val entries = listOf("All" to ContactFilter.All, "Favorites" to ContactFilter.Favorites) +
@@ -132,7 +131,7 @@ fun ContactsScreen(vm: DialerViewModel, actions: Actions) {
                     else -> StateMessage(Icons.Rounded.Contacts, "No contacts")
                 }
             } else {
-                ContactList(s.data, scrollKey = q to active, showRail = q.isBlank()) { vm.detailContact.value = it }
+                ContactList(s.data, scrollKey = q to active, showRail = q.isBlank()) { vm.openContactDetail(it) }
             }
         }
     }

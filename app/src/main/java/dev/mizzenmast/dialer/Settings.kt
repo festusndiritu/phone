@@ -78,7 +78,6 @@ private val ThemeNames = listOf("System", "Light", "Dark")
 @Composable
 fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
     val ctx = LocalContext.current
-    val tick by vm.tick.collectAsState()
     val theme by Prefs.theme.collectAsState()
     val haptics by Prefs.haptics.collectAsState()
     val tones by Prefs.keypadTones.collectAsState()
@@ -93,7 +92,7 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
     var troubleOpen by rememberSaveable { mutableStateOf(false) }
     var themeDialog by remember { mutableStateOf(false) }
     // Everything essential is granted by the time Settings is reachable; only the optional items are shown here.
-    val setup = remember(tick) { readSetup(ctx) }
+    val setup by vm.setup.collectAsState()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         ScreenTitle("Settings", "Personalize your calling experience")
@@ -142,12 +141,6 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
             } else {
                 ActionRow(Icons.Rounded.BatteryChargingFull, "Battery optimization", "Allow unrestricted use so calls show when power saving is on",
                     onClick = { actions.open(SettingsTarget.Battery) }) { StatusPill("Allow", ready = false) }
-            }
-            if (setup.overlay) {
-                StaticRow(Icons.Rounded.OpenInFull, "Display over other apps", "Allowed, so the call screen can open from the background") { StatusPill("Ready", ready = true) }
-            } else {
-                ActionRow(Icons.Rounded.OpenInFull, "Display over other apps", "Optional. Lets the call screen open over whatever you're doing",
-                    onClick = { actions.open(SettingsTarget.Overlay) }) { StatusPill("Allow", ready = false) }
             }
             NavRow(Icons.Rounded.PowerSettingsNew, "Auto-start & background", "Allow auto-start if calls ring but the screen never opens") { actions.open(SettingsTarget.AppDetails) }
         }
