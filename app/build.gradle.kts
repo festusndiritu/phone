@@ -15,8 +15,8 @@ android {
         applicationId = "dev.mizzenmast.dialer"
         minSdk = 30
         targetSdk = 36
-        versionCode = 2
-        versionName = "2.2.3"
+        versionCode = 3
+        versionName = "3.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
