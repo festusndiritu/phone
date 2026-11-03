@@ -47,11 +47,14 @@ import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Vibration
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -91,6 +94,16 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
 
     var troubleOpen by rememberSaveable { mutableStateOf(false) }
     var themeDialog by remember { mutableStateOf(false) }
+    val update by Updater.state.collectAsState()
+    var updateDialog by rememberSaveable { mutableStateOf(false) }
+    // True after the person taps "App updates" themselves: an update found by that check opens its dialog straight away.
+    var openWhenFound by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { Updater.checkIfDue(ctx) }
+    LaunchedEffect(update) {
+        if (openWhenFound && update is UpdateState.Available) updateDialog = true
+        if (update !is UpdateState.Checking) openWhenFound = false
+        if (update is UpdateState.UpToDate || update is UpdateState.Idle) updateDialog = false
+    }
     // Everything essential is granted by the time Settings is reachable; only the optional items are shown here.
     val setup by vm.setup.collectAsState()
 
@@ -154,11 +167,53 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
                     NavRow(null, "Clear log", null, chevron = false) { Diag.clear() }
                 }
             }
+            ActionRow(Icons.Rounded.SystemUpdate, "App updates", updateSummary(update), onClick = {
+                when (update) {
+                    is UpdateState.Checking -> Unit
+                    is UpdateState.Idle, is UpdateState.UpToDate -> { openWhenFound = true; Updater.check(ctx) }
+                    is UpdateState.Failed -> if ((update as UpdateState.Failed).info == null) { openWhenFound = true; Updater.check(ctx) } else updateDialog = true
+                    else -> updateDialog = true
+                }
+            }) {
+                when (val u = update) {
+                    is UpdateState.Checking -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalColors.current.accent)
+                    is UpdateState.Available, is UpdateState.NeedsPermission -> StatusPill("Update", ready = false)
+                    is UpdateState.Downloading -> StatusPill(if (u.progress >= 0f) "${(u.progress * 100).toInt()}%" else "Downloading", ready = true)
+                    is UpdateState.Installing -> StatusPill("Installing", ready = true)
+                    is UpdateState.Failed -> StatusPill("Retry", ready = false)
+                    else -> Unit
+                }
+            }
             StaticRow(Icons.Rounded.Info, "About", "Version ${Diag.version}") { }
         }
         Spacer(Modifier.height(32.dp))
     }
     if (themeDialog) ThemeDialog(theme) { themeDialog = false }
+    if (updateDialog) UpdateDialog(
+        state = update,
+        currentVersion = Updater.installedVersion(ctx),
+        onDismiss = { updateDialog = false },
+        onUpdate = { Updater.install(ctx, it) },
+        onCancel = { Updater.cancel() },
+        onOpenInstallSettings = {
+            ctx.startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:${ctx.packageName}"))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        },
+        onRetryCheck = { openWhenFound = true; Updater.check(ctx) }
+    )
+}
+
+private fun updateSummary(s: UpdateState): String = when (s) {
+    is UpdateState.Checking -> "Checking…"
+    is UpdateState.UpToDate -> "You're on the latest version"
+    is UpdateState.Available -> "Version ${s.info.version} is ready to install"
+    is UpdateState.Downloading -> "Downloading version ${s.info.version}"
+    is UpdateState.Installing -> "Waiting for you to confirm in Android"
+    is UpdateState.NeedsPermission -> "Needs one-time permission to install"
+    is UpdateState.Failed -> if (s.info == null) "Couldn't check. Tap to try again" else "Update didn't finish. Tap to try again"
+    is UpdateState.Idle -> "Check for a newer version"
 }
 
 /** Title + one-line description, then the rows. No dividers: the spacing between sections does the separating. */

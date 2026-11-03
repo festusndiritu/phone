@@ -1,5 +1,3 @@
-@file:OptIn(ExperimentalFoundationApi::class)
-
 package dev.mizzenmast.dialer
 
 import androidx.compose.animation.AnimatedVisibility

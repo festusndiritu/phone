@@ -104,7 +104,14 @@ object CallManager {
         ctx?.let { CallNotifications.clearAll(it) }
     }
 
-    fun setAudio(s: AudioUi?) { _audio.value = s }
+    fun setAudio(s: AudioUi?) {
+        // Only when the route or the available routes change, so mute toggles and repeat callbacks don't flood the log.
+        val old = _audio.value
+        if (s != null && (old == null || old.route != s.route || old.mask != s.mask)) {
+            Diag.log("audio_route", currentCallId(), "route=${s.route} available=${s.mask}")
+        }
+        _audio.value = s
+    }
 
     fun onAdded(svc: DialerInCallService, call: Call) {
         val id = Prefs.nextCallId()

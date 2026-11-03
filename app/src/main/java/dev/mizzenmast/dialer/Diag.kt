@@ -81,13 +81,17 @@ object Diag {
         io.execute { try { file?.delete() } catch (_: Exception) { } }
     }
 
+    /** Shared text gets cut off by many apps (around 20 KB), so only the newest events go in: the recent ones are what matter. */
+    private const val REPORT_MAX = 250
+
     fun report(all: List<Event>): String {
         val sb = StringBuilder("Dialer diagnostics\n")
         sb.append("App version: $version\n")
         sb.append("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n\n")
-        sb.append("== Event log (crashes and call lifecycle; t = ms since first event) ==\n")
-        val t0 = all.firstOrNull()?.t ?: 0L
-        all.forEach { sb.append("+${it.t - t0} ${it.name} call=${it.callId} ${it.detail}\n") }
+        val shown = all.takeLast(REPORT_MAX)
+        sb.append("== Event log (newest ${shown.size} of ${all.size}; wall-clock time, oldest first) ==\n")
+        val fmt = java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+        shown.forEach { sb.append("${fmt.format(java.util.Date(it.wall))} ${it.name} call=${it.callId} ${it.detail}\n") }
         return sb.toString()
     }
 }
