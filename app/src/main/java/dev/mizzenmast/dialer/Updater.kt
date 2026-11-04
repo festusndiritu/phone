@@ -207,6 +207,8 @@ object Updater {
                 Intent(app, UpdateReceiver::class.java).setPackage(app.packageName),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             )
+            // Lets [AppUpdatedReceiver] know that the coming "package replaced" is our own update.
+            app.getSharedPreferences("updater", Context.MODE_PRIVATE).edit().putLong("relaunch_until", System.currentTimeMillis() + 15 * 60 * 1000L).apply()
             session.commit(pending.intentSender)
             committed = true
         } finally {

@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         vm.setActive(true)
+        AppUpdatedReceiver.clear(this)
     }
 
     override fun onResume() {

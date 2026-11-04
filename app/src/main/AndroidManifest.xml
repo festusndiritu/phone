@@ -102,6 +102,12 @@
 
         <receiver android:name=".UpdateReceiver" android:exported="false" />
 
+        <receiver android:name=".AppUpdatedReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <receiver android:name=".CallActionReceiver" android:exported="false" android:directBootAware="true" />
     </application>
 </manifest>
