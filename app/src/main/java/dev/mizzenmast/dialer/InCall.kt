@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -232,7 +233,17 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
         }
         Spacer(Modifier.height(12.dp))
         // The running time is the one number people glance at during a call: big, and tabular digits so it doesn't jitter each second.
-        if (call.state == Call.STATE_ACTIVE && call.connectedAt > 0) Text(status, color = statusColor, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum")
+        if (call.state == Call.STATE_ACTIVE && call.connectedAt > 0) {
+            Text(
+                text = status,
+                color = statusColor,
+                style = TextStyle(
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFeatureSettings = "tnum"
+                )
+            )
+        }
         else Text(status, color = statusColor, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
         Spacer(Modifier.height(16.dp))
         Avatar(call.name, call.photo, 104.dp)
