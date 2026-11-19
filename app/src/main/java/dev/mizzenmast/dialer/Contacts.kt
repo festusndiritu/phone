@@ -153,7 +153,7 @@ fun SearchField(
     val motion = rememberMotionEnabled()
     LaunchedEffect(Unit) { if (autoFocus) focus.requestFocus() }
     Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(c.surfaceHigh).padding(start = 18.dp),
+        modifier.fillMaxWidth().clip(Radii.pill).background(c.surfaceHigh).padding(start = 18.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(Icons.Rounded.Search, null, tint = c.inkDim, modifier = Modifier.size(20.dp))
@@ -228,7 +228,7 @@ private fun ContactList(data: List<Contact>, scrollKey: Any, showRail: Boolean, 
                     // One rounded card per contact: avatar, name over a phone line, a star for favorites, a chevron.
                     Row(
                         Modifier.fillMaxWidth().padding(start = 16.dp, end = if (railOn) 38.dp else 16.dp, top = 4.dp, bottom = 4.dp)
-                            .clip(RoundedCornerShape(22.dp)).background(c.surface)
+                            .clip(RoundedCornerShape(Radii.lg)).background(c.surface)
                             .clickable { onOpen(ct) }.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {

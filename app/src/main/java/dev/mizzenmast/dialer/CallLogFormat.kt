@@ -64,8 +64,8 @@ internal fun metaText(e: LogEntry): String = when {
 
 /** The calls of one day share a card: only its first row rounds the top, only its last rounds the bottom. */
 internal fun rowShape(first: Boolean, last: Boolean): Shape {
-    val top = if (first) 22.dp else 0.dp
-    val bottom = if (last) 22.dp else 0.dp
+    val top = if (first) Radii.lg else 0.dp
+    val bottom = if (last) Radii.lg else 0.dp
     return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
 }
 

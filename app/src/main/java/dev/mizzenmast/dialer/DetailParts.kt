@@ -101,8 +101,8 @@ private fun ActionButton(
 
     Column(
         Modifier
-            .widthIn(min = 72.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .widthIn(min = 64.dp)
+            .clip(RoundedCornerShape(Radii.md))
             .clickable(role = Role.Button, onClick = onClick)
             .padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -123,7 +123,8 @@ private fun ActionButton(
         }
 
         Spacer(Modifier.height(6.dp))
-        Text(label, color = c.ink, fontSize = 13.sp)
+        // One line always: on a narrow phone a wrapped label stretches the whole row vertically.
+        Text(label, color = c.ink, fontSize = 13.sp, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Clip)
     }
 }
 
@@ -134,7 +135,7 @@ internal fun Section(title: String? = null, content: @Composable ColumnScope.() 
     if (title != null) Text(title, color = c.inkDim, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
         modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 20.dp, bottom = 6.dp))
     else Spacer(Modifier.height(12.dp))
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.surface), content = content)
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(Radii.lg)).background(c.surface), content = content)
 }
 
 /** One tappable line of a [Section]: optional icon, the title, an optional value on the right, an optional chevron. */

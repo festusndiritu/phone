@@ -195,7 +195,7 @@ private fun SuggestionRow(suggestions: List<Contact>, onCall: (String) -> Unit) 
     androidx.compose.animation.AnimatedVisibility(visible = suggestions.isNotEmpty()) {
         Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             suggestions.forEach { s ->
-                Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.surfaceHigh).clickable { onCall(s.phones.first().number) }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Column(Modifier.clip(RoundedCornerShape(Radii.sm)).background(c.surfaceHigh).clickable { onCall(s.phones.first().number) }.padding(horizontal = 12.dp, vertical = 6.dp)) {
                     Text(s.name, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 100.dp))
                     Text(s.phones.first().number, color = c.inkDim, fontSize = 11.sp, maxLines = 1)
                 }
@@ -246,7 +246,7 @@ private fun DialActions(key: Dp, number: String, canSave: Boolean, canFillLast: 
     Row(horizontalArrangement = Arrangement.spacedBy(30.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(key), contentAlignment = Alignment.Center) {
             if (canSave) Column(
-                Modifier.wrapContentWidth(unbounded = true).clip(RoundedCornerShape(14.dp))
+                Modifier.wrapContentWidth(unbounded = true).clip(RoundedCornerShape(Radii.sm))
                     .clickable(role = Role.Button, onClickLabel = "Save number", onClick = onSave).padding(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {

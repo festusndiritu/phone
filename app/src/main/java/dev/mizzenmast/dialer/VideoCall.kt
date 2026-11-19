@@ -242,7 +242,7 @@ private fun VideoHeader(call: CallInfo, onMinimize: (() -> Unit)?, modifier: Mod
         if (onMinimize != null) {
             Row(
                 Modifier
-                    .clip(RoundedCornerShape(20.dp))
+                    .clip(RoundedCornerShape(Radii.md))
                     .background(Color.White.copy(alpha = 0.18f))
                     .clickable(role = Role.Button, onClickLabel = "Minimize video", onClick = onMinimize)
                     .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -316,7 +316,7 @@ private fun VideoControls(call: CallInfo, ui: CallManager.VideoUi, audio: AudioU
             Modifier
                 .fillMaxWidth(0.7f)
                 .heightIn(min = 52.dp)
-                .clip(RoundedCornerShape(26.dp))
+                .clip(RoundedCornerShape(Radii.lg))
                 .background(c.decline)
                 .clickable(role = Role.Button, onClickLabel = "End call") { CallManager.disconnect(call.id) },
             horizontalArrangement = Arrangement.Center,
@@ -408,7 +408,7 @@ private fun SelfView(
 ) {
     val scope = rememberCoroutineScope()
     val swap by rememberUpdatedState(onSwap)
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(Radii.md)
     Box(
         Modifier
             .offset { IntOffset(pip.position.x.roundToInt(), pip.position.y.roundToInt()) }
@@ -462,7 +462,7 @@ private fun VideoBtn(modifier: Modifier = Modifier, icon: ImageVector, label: St
     Column(
         modifier
             .alpha(if (enabled) 1f else 0.38f)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(Radii.md))
             .clickable(
                 enabled = enabled,
                 role = Role.Button,
@@ -487,7 +487,7 @@ internal fun VideoRequestDialog(call: CallInfo) {
     Dialog(onDismissRequest = { CallManager.answerVideoRequest(call.id, false) }) {
         Column(
             Modifier
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(Radii.lg))
                 .background(c.surface)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally

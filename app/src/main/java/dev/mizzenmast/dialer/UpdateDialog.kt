@@ -57,7 +57,7 @@ fun UpdateDialog(
     }
 
     Dialog(onDismissRequest = onDismiss) {
-        Column(Modifier.clip(RoundedCornerShape(24.dp)).background(c.surface).padding(24.dp)) {
+        Column(Modifier.clip(RoundedCornerShape(Radii.lg)).background(c.surface).padding(24.dp)) {
             Text(title, color = c.ink, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(8.dp))
 

@@ -57,10 +57,25 @@ object SimLabels {
         h ?: return null
         val key = h.componentName.flattenToString() + "/" + h.id
         labels[key]?.let { return it }
-        val l = try { ctx.getSystemService(TelecomManager::class.java)?.getPhoneAccount(h)?.label?.toString()?.takeIf { it.isNotBlank() } }
-        catch (e: Exception) { Diag.fail("sim_label", e); null }
+        // The name the person set under Settings > SIM is the subscription's display name. Telecom's PhoneAccount label is
+        // filled in separately by the system and can stay the carrier name (or go blank) after a rename, so ask the
+        // subscription first, then the account, then fall back to the physical slot so a known SIM never shows no chip.
+        val l = subscriptionName(ctx, h) ?: accountLabel(ctx, h) ?: slot(ctx, h.componentName.flattenToString(), h.id)?.let { "SIM $it" }
         if (l != null) labels[key] = l // a miss (SIM gone, no permission) mustn't stick
         return l
+    }
+
+    private fun accountLabel(ctx: Context, h: PhoneAccountHandle): String? = try {
+        ctx.getSystemService(TelecomManager::class.java)?.getPhoneAccount(h)?.label?.toString()?.takeIf { it.isNotBlank() }
+    } catch (e: Exception) { Diag.fail("sim_label", e); null }
+
+    private fun subscriptionName(ctx: Context, h: PhoneAccountHandle): String? {
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return null
+        return try {
+            val subId = ctx.getSystemService(TelephonyManager::class.java)?.getSubscriptionId(h) ?: return null
+            if (subId < 0) return null
+            ctx.getSystemService(SubscriptionManager::class.java)?.getActiveSubscriptionInfo(subId)?.displayName?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) { Diag.fail("sim_sub_name", e); null }
     }
 
     /** 1-based physical SIM slot for a call account, or null when it can't be determined (no permission, SIM removed). */

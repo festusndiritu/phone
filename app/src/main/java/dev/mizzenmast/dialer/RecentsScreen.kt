@@ -29,14 +29,19 @@ import androidx.compose.material.icons.automirrored.rounded.CallMissed
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Checklist
-import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Sms
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -46,7 +51,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,9 +67,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /** Up to five starred contacts. Tap to call their first number, long-press to open the contact. Can be hidden in Settings > Appearance & interaction. */
 @Composable
@@ -77,7 +79,7 @@ private fun FavoritesRow(favs: List<Contact>, onCall: (Contact) -> Unit, onOpen:
     ), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         favs.forEach { f ->
             Column(
-                Modifier.width(60.dp).clip(RoundedCornerShape(12.dp))
+                Modifier.width(60.dp).clip(RoundedCornerShape(Radii.sm))
                     .combinedClickable(
                         role = Role.Button,
                         onClickLabel = "Call ${f.name}",
@@ -119,7 +121,6 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
     var confirmClear by remember { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
-    var expanded by remember { mutableStateOf<Long?>(null) }
     fun exitSelection() { selecting = false; selected.clear() }
     // Un-selecting the last row ends selection, like every system list does.
     fun toggle(id: Long) { if (id in selected) selected.remove(id) else selected.add(id); if (selected.isEmpty()) exitSelection() }
@@ -178,7 +179,7 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                 null, "Allow access", actions.requestCallLog)
             is Load.Failed -> StateMessage(Icons.Rounded.History, "Couldn't load calls", s.msg, "Try again", actions.requestCallLog)
             is Load.Ready -> if (s.data.logEmpty) {
-                StateMessage(Icons.Rounded.History, "No calls yet")
+                StateMessage(Icons.Rounded.History, "No calls yet", "Calls you make and receive show up here", "Open dialpad") { vm.openDialer() }
             } else {
                 if (shown.isEmpty()) {
                     if (query.isNotBlank()) StateMessage(Icons.Rounded.Search, "No matches")
@@ -197,16 +198,21 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
                         when (item) {
                             is RItem.Header -> Text(item.label, color = c.inkDim, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 16.dp, bottom = 6.dp))
-                            is RItem.Group -> LogRow(item,
-                                selecting = selecting,
-                                selected = item.first.id in selected,
-                                shape = rowShape(shown.getOrNull(i - 1) !is RItem.Group, shown.getOrNull(i + 1) !is RItem.Group),
-                                onOpen = { vm.openDetail(item.first) },
-                                expanded = expanded == item.first.id && !selecting,
-                                onToggle = { expanded = if (expanded == item.first.id) null else item.first.id },
-                                onAddContact = { actions.addContact(item.first.number) },
-                                onCall = { actions.call(item.first.number) },
-                                onSelect = { selecting = true; toggle(item.first.id) })
+                            is RItem.Group -> {
+                                val rowShape = rowShape(shown.getOrNull(i - 1) !is RItem.Group, shown.getOrNull(i + 1) !is RItem.Group)
+                                SwipeActions(
+                                    enabled = !selecting && item.first.number.isNotBlank(), shape = rowShape,
+                                    onCall = { actions.call(item.first.number) }, onMessage = { actions.message(item.first.number) }
+                                ) {
+                                    LogRow(item,
+                                        selecting = selecting,
+                                        selected = item.first.id in selected,
+                                        shape = rowShape,
+                                        onOpen = { vm.openDetail(item.first) },
+                                        onCall = { actions.call(item.first.number) },
+                                        onSelect = { selecting = true; toggle(item.first.id) })
+                                }
+                            }
                         }
                     }
                 }
@@ -233,26 +239,57 @@ fun RecentsScreen(vm: DialerViewModel, actions: Actions) {
 }
 
 /**
- * Tap the row to call back (the SIM choice happens in the call flow). The trailing time / SIM / arrow opens the details;
- * for a number that isn't saved it expands Add contact / Block / Details in place instead. Long-press anywhere to select.
+ * Swipe a row right to call, left to message, like the stock dialers. The row springs back; the action just starts.
+ * Off while selecting, and for rows without a number.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeActions(enabled: Boolean, shape: Shape, onCall: () -> Unit, onMessage: () -> Unit, content: @Composable () -> Unit) {
+    if (!enabled) { content(); return }
+    val c = LocalColors.current
+    val state = rememberSwipeToDismissBoxState(confirmValueChange = { v ->
+        when (v) {
+            SwipeToDismissBoxValue.StartToEnd -> onCall()
+            SwipeToDismissBoxValue.EndToStart -> onMessage()
+            else -> Unit
+        }
+        false
+    })
+    SwipeToDismissBox(
+        state = state,
+        modifier = Modifier.clip(shape),
+        backgroundContent = {
+            val dir = state.dismissDirection
+            val tint = if (dir == SwipeToDismissBoxValue.EndToStart) c.outgoing else c.answer
+            Box(
+                Modifier.fillMaxSize().background(if (dir == SwipeToDismissBoxValue.Settled) Color.Transparent else tint.copy(alpha = 0.18f)).padding(horizontal = 24.dp),
+                contentAlignment = if (dir == SwipeToDismissBoxValue.EndToStart) Alignment.CenterEnd else Alignment.CenterStart
+            ) {
+                if (dir != SwipeToDismissBoxValue.Settled) Icon(if (dir == SwipeToDismissBoxValue.EndToStart) Icons.Rounded.Sms else Icons.Rounded.Call, null, tint = tint)
+            }
+        },
+        content = { content() }
+    )
+}
+
+/**
+ * Every row works the same way, saved contact or not: tap the row to call back (the SIM choice happens in the call flow);
+ * tap the trailing time / SIM / (i) to open the details, where Add contact and Block live. Long-press anywhere to select.
+ * (Unsaved numbers used to expand a row of pill buttons in place, which didn't fit narrow screens and made the same tap mean
+ * different things on different rows.)
  */
 @Composable
 private fun LogRow(
     g: RItem.Group, selecting: Boolean, selected: Boolean, shape: Shape,
-    onOpen: () -> Unit, expanded: Boolean, onToggle: () -> Unit, onAddContact: () -> Unit,
-    onCall: () -> Unit, onSelect: () -> Unit
+    onOpen: () -> Unit, onCall: () -> Unit, onSelect: () -> Unit
 ) {
     val c = LocalColors.current
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
     val e = g.first
     val contact = g.contact
     val count = g.entries.size
     val missed = e.type == CallLog.Calls.MISSED_TYPE
     val title = g.title
-    val unknown = contact == null && e.number.isNotBlank() && e.presentation == CallLog.Calls.PRESENTATION_ALLOWED
-    var blocked by remember(e.number) { mutableStateOf(false) }
-    LaunchedEffect(expanded) { if (expanded && unknown) blocked = withContext(Dispatchers.IO) { BlockedRepo.isBlocked(ctx, e.number) } }
     Column(Modifier.fillMaxWidth().clip(shape).background(c.surface).background(if (selected) c.accent.copy(alpha = 0.12f) else Color.Transparent)) {
         Row(
             Modifier.fillMaxWidth().then(if (selecting) Modifier.selectable(selected, role = Role.Checkbox, onClick = onSelect) else Modifier),
@@ -289,8 +326,8 @@ private fun LogRow(
             if (!selecting && e.number.isNotBlank()) Column(
                 Modifier.heightIn(min = 68.dp)
                     .combinedClickable(
-                        role = Role.Button, onClickLabel = if (unknown) (if (expanded) "Collapse" else "Expand") else "Call details",
-                        onLongClickLabel = "Select", onLongClick = onSelect, onClick = if (unknown) onToggle else onOpen)
+                        role = Role.Button, onClickLabel = "Call details",
+                        onLongClickLabel = "Select", onLongClick = onSelect, onClick = onOpen)
                     .padding(start = 8.dp, end = 12.dp),
                 horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.Center
             ) {
@@ -298,16 +335,9 @@ private fun LogRow(
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     e.simSlot?.takeIf { it in 1..2 }?.let { SimTag(it); Spacer(Modifier.width(2.dp)) }
-                    Icon(Icons.Rounded.ChevronRight, null, tint = c.inkDim, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.Info, null, tint = c.inkDim, modifier = Modifier.size(20.dp))
                 }
             } else Spacer(Modifier.width(16.dp))
-        }
-        if (unknown) androidx.compose.animation.AnimatedVisibility(visible = expanded) {
-            Row(Modifier.fillMaxWidth().padding(start = 76.dp, end = 16.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextPill("Add contact", onAddContact, filled = true)
-                TextPill(if (blocked) "Unblock" else "Block", { scope.launch { blocked = toggleBlocked(ctx, e.number, blocked) } }, danger = !blocked)
-                TextPill("Details", onOpen)
-            }
         }
     }
 }

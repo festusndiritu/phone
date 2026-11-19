@@ -90,7 +90,7 @@ fun InCallRoot(onAddCall: () -> Unit, inPip: Boolean = false, onMinimize: (() ->
 fun SimChoice(label: String, onClick: () -> Unit) {
     val c = LocalColors.current
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 72.dp).clip(RoundedCornerShape(20.dp)).background(c.surface)
+        Modifier.fillMaxWidth().heightIn(min = 72.dp).clip(RoundedCornerShape(Radii.lg)).background(c.surface)
             .clickable(role = Role.Button, onClickLabel = "Call with $label", onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -126,7 +126,7 @@ private fun IncomingScreen(call: CallInfo, others: List<CallInfo>) {
             Spacer(Modifier.height(6.dp))
             Text(pretty(call.number) ?: call.number, color = c.inkDim, fontSize = 18.sp)
         }
-        call.sim?.let { Spacer(Modifier.height(10.dp)); SimChip(it) }
+        if (call.sim != null || call.simSlot != null) { Spacer(Modifier.height(10.dp)); SimChip(call.simSlot, call.sim) }
         Spacer(Modifier.weight(1f))
         if (replying && canReply) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -149,14 +149,8 @@ private fun IncomingScreen(call: CallInfo, others: List<CallInfo>) {
             }
         }
         Spacer(Modifier.height(24.dp))
-        SwipeDecision(call.id, onAnswer = { CallManager.answer(call.id) }, onDecline = { CallManager.reject(call.id) })
-        if (hints) {
-            Spacer(Modifier.height(12.dp))
-            Text(
-                if (others.isEmpty()) "Swipe right to answer, left to decline" else "Right: hold & answer · Left: decline",
-                color = c.inkDim, fontSize = 12.sp, textAlign = TextAlign.Center
-            )
-        }
+        SwipeDecision(call.id, onAnswer = { CallManager.answer(call.id) }, onDecline = { CallManager.reject(call.id) },
+            hints = hints, answerLabel = if (others.isEmpty()) "Answer call" else "Hold current call and answer")
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -226,7 +220,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         others.forEach { o ->
             Row(
-                Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(16.dp)).background(c.surface).padding(start = 16.dp),
+                Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(Radii.pill).background(c.surface).padding(start = 20.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
@@ -237,13 +231,15 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
             }
         }
         Spacer(Modifier.height(12.dp))
-        Text(status, color = statusColor, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+        // The running time is the one number people glance at during a call: big, and tabular digits so it doesn't jitter each second.
+        if (call.state == Call.STATE_ACTIVE && call.connectedAt > 0) Text(status, color = statusColor, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum")
+        else Text(status, color = statusColor, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
         Spacer(Modifier.height(16.dp))
         Avatar(call.name, call.photo, 104.dp)
         Spacer(Modifier.height(14.dp))
         Text(call.title(), color = c.ink, fontSize = 28.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (call.name != null && call.number != null) Text(pretty(call.number) ?: call.number, color = c.inkDim, fontSize = 15.sp)
-        call.sim?.let { Spacer(Modifier.height(8.dp)); SimChip(it) }
+        if (call.sim != null || call.simSlot != null) { Spacer(Modifier.height(8.dp)); SimChip(call.simSlot, call.sim) }
         if (call.isConference) {
             Spacer(Modifier.height(8.dp))
             call.childIds.mapNotNull { id -> all.firstOrNull { it.id == id } }.forEach { ch ->
@@ -289,7 +285,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                     AudioUi.BLUETOOTH -> Icons.Rounded.Bluetooth to (btName?.takeIf { it.isNotBlank() }
                         ?.let { if (it.length > 11) it.take(10) + "…" else it } ?: "Bluetooth")
                     AudioUi.WIRED -> Icons.Rounded.Headset to "Headset"
-                    else -> Icons.Rounded.PhoneInTalk to if (multi) "Audio" else "Speaker"
+                    else -> Icons.Rounded.PhoneInTalk to if (multi) "Phone" else "Speaker" // with several outputs the label names the current one
                 }
 
                 val heldOther = others.firstOrNull { it.state == Call.STATE_HOLDING }
@@ -331,10 +327,13 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
                         else -> null
                     }
                 )
+                // Always two full rows of three: Video / Merge / Swap come and go, and the other buttons must not move when they do.
+                val slots: List<Ctl?> = controls + List((6 - controls.size).coerceAtLeast(0)) { null }
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                    controls.chunked(3).forEach { row ->
-                        // Full rows spread across the width; a short last row is centered.
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = if (row.size == 3) Arrangement.SpaceEvenly else Arrangement.spacedBy(32.dp, Alignment.CenterHorizontally)) { row.forEach { CtlButton(it) } }
+                    slots.chunked(3).forEach { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            row.forEach { if (it != null) CtlButton(it) else Spacer(Modifier.width(80.dp)) }
+                        }
                     }
                 }
             }
@@ -349,7 +348,7 @@ private fun OngoingScreen(call: CallInfo, top: List<CallInfo>, all: List<CallInf
         val mask = audio?.mask ?: 0
         val cur = audio?.route ?: 0
         Dialog(onDismissRequest = { routes = false }) {
-            Column(Modifier.clip(RoundedCornerShape(24.dp)).background(c.surface).padding(vertical = 12.dp)) {
+            Column(Modifier.clip(RoundedCornerShape(Radii.lg)).background(c.surface).padding(vertical = 12.dp)) {
                 listOf(
                     Triple(AudioUi.EARPIECE, "Phone", Icons.Rounded.PhoneInTalk),
                     Triple(AudioUi.SPEAKER, "Speaker", Icons.AutoMirrored.Rounded.VolumeUp),

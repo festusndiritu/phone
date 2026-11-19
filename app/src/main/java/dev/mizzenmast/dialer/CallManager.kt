@@ -52,6 +52,7 @@ object CallManager {
     private val resolved = HashMap<Int, Resolved>()
     private val resolvedFor = HashMap<Int, String>()
     private val simLabels = HashMap<Int, String>()
+    private val simSlots = HashMap<Int, Int>()
     private val simHandleFor = HashMap<Int, PhoneAccountHandle>()
     private val lingering = LinkedHashMap<Int, CallInfo>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -96,7 +97,7 @@ object CallManager {
             callbacks[id]?.let { try { call.unregisterCallback(it) } catch (e: Exception) { Diag.fail("call_unregister", e, id) } }
         }
         cancelVideoTimers()
-        refs.clear(); idOf.clear(); callbacks.clear(); incoming.clear(); resolved.clear(); resolvedFor.clear(); lingering.clear(); simLabels.clear(); simHandleFor.clear()
+        refs.clear(); idOf.clear(); callbacks.clear(); incoming.clear(); resolved.clear(); resolvedFor.clear(); lingering.clear(); simLabels.clear(); simSlots.clear(); simHandleFor.clear()
         videoCbs.clear(); hooked.clear(); upgradeAsk.clear(); camBound.clear(); _video.value = VideoUi()
         service = null
         _audio.value = null
@@ -174,7 +175,7 @@ object CallManager {
             scope.launch {
                 delay(1200.milliseconds) // brief "Call ended / Busy / Declined" feedback, then the screen goes away
                 lingering.remove(id)
-                resolved.remove(id); resolvedFor.remove(id); incoming.remove(id); dialAt.remove(id); buzzed.remove(id); simLabels.remove(id); simHandleFor.remove(id)
+                resolved.remove(id); resolvedFor.remove(id); incoming.remove(id); dialAt.remove(id); buzzed.remove(id); simLabels.remove(id); simSlots.remove(id); simHandleFor.remove(id)
                 publish()
             }
         } else publish()
@@ -189,6 +190,7 @@ object CallManager {
             }
             if (state == Call.STATE_ACTIVE && incoming[id] == false && Prefs.vibrateOnAnswer.value && buzzed.add(id)) buzz()
             if (state == Call.STATE_ACTIVE) Diag.log("video_caps", id, "canUpgrade=${HiddenApi.canUpgradeToVideo(call)} caps=${call.details.callCapabilities} videoState=${call.details.videoState} hasVideoCall=${call.videoCall != null}")
+            if (state == Call.STATE_ACTIVE) logAudioSnapshot(id)
             syncVideo(id, call)
             publish()
         }
@@ -197,6 +199,26 @@ object CallManager {
         override fun onParentChanged(call: Call, parent: Call?) = publish()
         override fun onChildrenChanged(call: Call, children: List<Call>) = publish()
         override fun onConferenceableCallsChanged(call: Call, calls: List<Call>) = publish()
+    }
+
+    /**
+     * What the platform's audio stack looks like shortly after a call connects (after Telecom has settled the route). Call audio
+     * itself is Telecom's job, so when "I can't hear them" is reported this is the evidence: a zero voice-call volume, a stuck
+     * mute, or a mode that never became IN_CALL each show up here.
+     */
+    private fun logAudioSnapshot(id: Int) {
+        val ctx = appCtx ?: return
+        scope.launch {
+            delay(1500.milliseconds)
+            if (refs[id] == null) return@launch
+            try {
+                val am = ctx.getSystemService(android.media.AudioManager::class.java) ?: return@launch
+                val s = android.media.AudioManager.STREAM_VOICE_CALL
+                Diag.log("audio_snapshot", id, "mode=${am.mode} voiceVol=${am.getStreamVolume(s)}/${am.getStreamMaxVolume(s)} " +
+                    "streamMuted=${am.isStreamMute(s)} micMuted=${am.isMicrophoneMute} speakerOn=${am.isSpeakerphoneOn} " +
+                    "btSco=${am.isBluetoothScoOn} ringerMode=${am.ringerMode}")
+            } catch (e: Exception) { Diag.fail("audio_snapshot", e, id) }
+        }
     }
 
     private fun publish(ctx: Context? = appCtx) {
@@ -227,6 +249,7 @@ object CallManager {
             endCode = d.disconnectCause?.code ?: -1,
             sims = if (st == Call.STATE_SELECT_PHONE_ACCOUNT) simOptions(call) else emptyList(),
             sim = simLabels[id],
+            simSlot = simSlots[id],
             videoState = d.videoState,
             canVideo = HiddenApi.canUpgradeToVideo(call),
             videoRequest = upgradeAsk[id] ?: 0,
@@ -296,9 +319,15 @@ object CallManager {
         simHandleFor[id] = h
         scope.launch(Dispatchers.IO) {
             SimLabels.refresh(ctx)
-            val label = if (SimLabels.multiSim(ctx)) SimLabels.label(ctx, h) else null
+            val multi = SimLabels.multiSim(ctx)
+            val label = if (multi) SimLabels.label(ctx, h) else null
+            val slot = if (multi) SimLabels.slot(ctx, h.componentName.flattenToString(), h.id) else null
             withContext(Dispatchers.Main) {
-                if (label != null && refs.containsKey(id) && simLabels[id] != label) { simLabels[id] = label; publish() }
+                if (!refs.containsKey(id)) return@withContext
+                var changed = false
+                if (label != null && simLabels[id] != label) { simLabels[id] = label; changed = true }
+                if (slot != null && simSlots[id] != slot) { simSlots[id] = slot; changed = true }
+                if (changed) publish()
             }
         }
     }

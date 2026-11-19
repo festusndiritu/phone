@@ -151,22 +151,34 @@ object CallNotifications {
         } catch (e: SecurityException) { Diag.fail("missed_notify", e, c.id) }
     }
 
-    /** Quiet follow-up after an outgoing call that went unanswered, with one-tap redial and a reminder. */
+    /**
+     * Quiet follow-up after an outgoing call that went unanswered: what happened and when, which SIM, and two explicit actions.
+     * Tapping the notification only opens Recents (it never places a call by itself); "Call again" does. Silent, expires on
+     * its own, and can be switched off in Settings.
+     */
     fun unanswered(ctx: Context, c: CallInfo) {
+        if (!Prefs.followUps.value) return
         val number = c.number?.takeIf { it.isNotBlank() } ?: return
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         ensureChannels(nm)
+        val what = c.endLabel ?: "No answer"
         val b = NotificationCompat.Builder(ctx, CH_FOLLOWUP)
             .setSmallIcon(R.drawable.ic_call_notification)
+            .setColor(0xFF2E8B6F.toInt())
             .setContentTitle(c.title())
-            .setContentText(c.endLabel)
+            .setContentText(if (what == "No answer") "They didn't pick up" else what)
+            .setSubText(c.sim)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setShowWhen(true)
+            .setWhen(System.currentTimeMillis())
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
             .setAutoCancel(true)
             .setTimeoutAfter(10 * 60 * 1000L)
+            .setContentIntent(DialerIntents.openRecents(ctx, 35))
             .addAction(R.drawable.ic_call_notification, "Call again", callPi(ctx, 34, number))
             .addAction(R.drawable.ic_call_notification, "Remind in 1h", snoozePi(ctx, number, c.title(), ID_FOLLOWUP))
-            .setContentIntent(callPi(ctx, 35, number))
         try { nm.notify(number, ID_FOLLOWUP, b.build()) } catch (e: SecurityException) { Diag.fail("followup_notify", e, c.id) }
     }
 
@@ -213,6 +225,13 @@ object CallNotifications {
         val key = missedKey(number)
         missedCount.remove(key)
         ctx.getSystemService(NotificationManager::class.java)?.cancel(key, ID_MISSED)
+    }
+
+    /** Removes any follow-up notification still showing (when the person switches them off). */
+    fun clearFollowUps(ctx: Context) {
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        try { nm.activeNotifications.filter { it.id == ID_FOLLOWUP }.forEach { nm.cancel(it.tag, it.id) } }
+        catch (e: Exception) { Diag.fail("clear_followups", e) }
     }
 
     /** Dismisses our missed-call notifications, and the system's own copy if it posted one. */

@@ -1,6 +1,6 @@
 <resources>
     <style name="Theme.Dialer" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#0D0F10</item>
+        <item name="android:windowBackground">#0B0D0E</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>

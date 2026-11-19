@@ -33,6 +33,8 @@ data class CallInfo(
     val endCode: Int,
     val sims: List<SimOption>,
     val sim: String? = null,
+    /** 1-based physical SIM slot this call uses, when known. */
+    val simSlot: Int? = null,
     val videoState: Int = 0,
     /** Carrier says this call can be switched to video (Google Phone's "video call" button). */
     val canVideo: Boolean = false,
@@ -74,11 +76,16 @@ data class AudioUi(val route: Int, val mask: Int, val muted: Boolean, val btName
 
         fun of(ctx: Context, s: CallAudioState?) = s?.let { AudioUi(it.route, it.supportedRouteMask, it.isMuted, bluetoothName(ctx, it)) }
 
-        /** The device name needs BLUETOOTH_CONNECT from API 31; without it the UI just says "Bluetooth". */
+        /**
+         * The device name needs BLUETOOTH_CONNECT from API 31 and the legacy BLUETOOTH permission before that; without it
+         * the UI just says "Bluetooth". A name is cosmetic, so any failure here must never take the call screen down
+         * (this used to throw SecurityException on Android 11 and killed the process whenever a headset was connected).
+         */
         private fun bluetoothName(ctx: Context, s: CallAudioState): String? {
             val device = s.activeBluetoothDevice ?: return null
-            if (Build.VERSION.SDK_INT >= 31 && ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return null
-            return device.name
+            val perm = if (Build.VERSION.SDK_INT >= 31) Manifest.permission.BLUETOOTH_CONNECT else Manifest.permission.BLUETOOTH
+            if (ContextCompat.checkSelfPermission(ctx, perm) != PackageManager.PERMISSION_GRANTED) return null
+            return try { device.name } catch (e: Exception) { Diag.fail("bt_name", e); null }
         }
     }
 }

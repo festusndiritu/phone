@@ -176,38 +176,38 @@ fun Avatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifie
     }
 }
 
+/**
+ * Which SIM a call uses: the physical slot ("SIM 1") plus the name the person gave it in system settings, when that adds
+ * something. Either part may be missing (slot unreadable, no name); the chip shows what it has and nothing when it has neither.
+ */
 @Composable
-fun SimChip(label: String, modifier: Modifier = Modifier, compact: Boolean = false) {
+fun SimChip(slot: Int?, name: String?, modifier: Modifier = Modifier, compact: Boolean = false) {
     val c = LocalColors.current
-
-    // LogEntry.simText is the 1-based physical slot when known; otherwise it
-    // falls back to the phone-account/carrier label. Never guess a slot from a
-    // carrier name, since labels differ across devices and operators.
-    val slot = when (label.trim().uppercase()) {
-        "1", "SIM 1", "SIM1" -> 1
-        "2", "SIM 2", "SIM2" -> 2
-        else -> null
+    val custom = name?.trim()?.takeIf { it.isNotEmpty() && !it.matches(Regex("(?i)sim\\s*\\d")) }
+    val text = when {
+        slot != null && custom != null -> "SIM $slot \u00B7 $custom"
+        slot != null -> "SIM $slot"
+        else -> custom ?: return
     }
-
-    if (slot == null) return
-
     Row(
-        modifier.clip(RoundedCornerShape(10.dp)).background(c.surfaceHigh)
-            .padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (compact) 2.dp else 4.dp),
+        modifier.widthIn(max = 260.dp).clip(Radii.pill).background(c.surfaceHigh)
+            .padding(horizontal = if (compact) 6.dp else 10.dp, vertical = if (compact) 2.dp else 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             Icons.Rounded.SimCard,
-            contentDescription = "SIM $slot",
+            contentDescription = null,
             tint = c.accent,
             modifier = Modifier.size(if (compact) 16.dp else 20.dp)
         )
-        Spacer(Modifier.width(3.dp))
+        Spacer(Modifier.width(5.dp))
         Text(
-            slot.toString(),
+            text,
             color = c.inkDim,
-            fontSize = if (compact) 11.sp else 13.sp,
-            fontWeight = FontWeight.Medium
+            fontSize = if (compact) 11.sp else 14.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -217,16 +217,16 @@ fun SimChip(label: String, modifier: Modifier = Modifier, compact: Boolean = fal
 fun SimTag(slot: Int, modifier: Modifier = Modifier) {
     val c = LocalColors.current
     Text("SIM $slot", color = c.inkDim, fontSize = 10.sp, fontWeight = FontWeight.Medium,
-        modifier = modifier.clip(RoundedCornerShape(8.dp)).background(c.surfaceHigh).padding(horizontal = 6.dp, vertical = 2.dp))
+        modifier = modifier.clip(Radii.pill).background(c.surfaceHigh).padding(horizontal = 6.dp, vertical = 2.dp))
 }
 
 /** Filter chip: filled with the accent when selected, a quiet outline when idle. */
 @Composable
 fun FilterChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val c = LocalColors.current
-    val shape = RoundedCornerShape(16.dp)
-    // The outer box keeps a 40dp touch target while the visible chip is only 32dp tall.
-    Box(modifier.heightIn(min = 40.dp).selectable(selected, role = Role.Tab, onClick = onClick), contentAlignment = Alignment.Center) {
+    val shape = RoundedCornerShape(Radii.md)
+    // The outer box keeps a 48dp touch target while the visible chip is only 32dp tall.
+    Box(modifier.heightIn(min = 48.dp).selectable(selected, role = Role.Tab, onClick = onClick), contentAlignment = Alignment.Center) {
         Box(
             Modifier.height(32.dp).clip(shape)
                 .then(if (selected) Modifier.background(c.accent) else Modifier.background(c.surface).border(1.dp, c.line, shape))
@@ -306,7 +306,7 @@ fun RoundButton(icon: ImageVector, desc: String, bg: Color, tint: Color, size: D
 fun TextPill(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, danger: Boolean = false, filled: Boolean = false) {
     val c = LocalColors.current
     Box(
-        modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(22.dp))
+        modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(Radii.lg))
             .background(if (filled) c.accent else c.surfaceHigh)
             .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 18.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
@@ -346,7 +346,7 @@ fun ContextBar(count: Int, onClose: () -> Unit, actions: @Composable RowScope.()
 fun DialogButton(text: String, onClick: () -> Unit, danger: Boolean = false) {
     val c = LocalColors.current
     Box(
-        Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp),
+        Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(Radii.sm)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center
     ) { Text(text, color = if (danger) c.decline else c.accent, fontSize = 15.sp, fontWeight = FontWeight.Medium) }
 }
@@ -419,7 +419,7 @@ fun NoticeHost(modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) { Notices.flow.collect { state.showSnackbar(it, duration = SnackbarDuration.Short) } }
     SnackbarHost(state, modifier) { data ->
         Box(
-            Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(16.dp)).background(c.ink)
+            Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(Radii.md)).background(c.ink)
                 .padding(horizontal = 18.dp, vertical = 14.dp).semantics { liveRegion = LiveRegionMode.Polite }
         ) { Text(data.visuals.message, color = c.bg, fontSize = 14.sp) }
     }
@@ -464,7 +464,7 @@ fun NumberMenu(number: String, name: String?, photo: String?, onEdit: () -> Unit
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Column(Modifier.clip(RoundedCornerShape(28.dp)).background(c.surface).padding(bottom = 8.dp)) {
+            Column(Modifier.clip(RoundedCornerShape(Radii.sheet)).background(c.surface).padding(bottom = 8.dp)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
                     Avatar(name, photo, 44.dp)
                     Spacer(Modifier.width(14.dp))
@@ -482,7 +482,7 @@ fun NumberMenu(number: String, name: String?, photo: String?, onEdit: () -> Unit
                 if (onAddContact != null) Item(Icons.Rounded.PersonAdd, "Add contact") { onDismiss(); onAddContact() }
             }
             Box(
-                Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(c.surface).clickable(role = Role.Button, onClick = onDismiss),
+                Modifier.fillMaxWidth().height(56.dp).clip(Radii.pill).background(c.surface).clickable(role = Role.Button, onClick = onDismiss),
                 contentAlignment = Alignment.Center
             ) { Text("Cancel", color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.Medium) }
         }
@@ -493,7 +493,7 @@ fun NumberMenu(number: String, name: String?, photo: String?, onEdit: () -> Unit
 fun ConfirmDialog(title: String, body: String?, confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     val c = LocalColors.current
     Dialog(onDismissRequest = onDismiss) {
-        Column(Modifier.clip(RoundedCornerShape(24.dp)).background(c.surface).padding(24.dp)) {
+        Column(Modifier.clip(RoundedCornerShape(Radii.lg)).background(c.surface).padding(24.dp)) {
             Text(title, color = c.ink, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
             if (body != null) {
                 Spacer(Modifier.height(8.dp))
@@ -594,9 +594,12 @@ fun Keypad(keySize: Dp, onKey: (Char) -> Unit, modifier: Modifier = Modifier, on
     }
 }
 
-/** Drag the thumb right to answer, left to decline. The end targets are also tappable (accessibility). */
+/**
+ * Drag the thumb right to answer, left to decline. The end targets are also tappable (accessibility). [hints] shows the animated
+ * arrows beside the thumb (Settings > Swipe arrows); the controls work the same without them.
+ */
 @Composable
-fun SwipeDecision(key: Any, onAnswer: () -> Unit, onDecline: () -> Unit) {
+fun SwipeDecision(key: Any, onAnswer: () -> Unit, onDecline: () -> Unit, hints: Boolean = true, answerLabel: String = "Answer call") {
     val c = LocalColors.current
     val density = LocalDensity.current
     val tick = rememberTick()
@@ -614,7 +617,7 @@ fun SwipeDecision(key: Any, onAnswer: () -> Unit, onDecline: () -> Unit) {
         @Composable
         fun Chevrons(right: Boolean, tint: Color) {
             Row(
-                Modifier.align(Alignment.Center).offset(x = if (right) 56.dp else (-56).dp).alpha(if (done) 0f else idle),
+                Modifier.align(Alignment.Center).offset(x = if (right) 56.dp else (-56).dp).alpha(if (done || !hints) 0f else idle),
                 horizontalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 for (i in 0 until 2) {
@@ -633,7 +636,7 @@ fun SwipeDecision(key: Any, onAnswer: () -> Unit, onDecline: () -> Unit) {
         Box(
             Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(thumb).clip(CircleShape)
                 .background(c.answer.copy(alpha = 0.16f))
-                .clickable(role = Role.Button, onClickLabel = "Answer call") { if (!done) { done = true; tick(); onAnswer() } },
+                .clickable(role = Role.Button, onClickLabel = answerLabel) { if (!done) { done = true; tick(); onAnswer() } },
             contentAlignment = Alignment.Center
         ) { Icon(Icons.Rounded.Phone, "Answer", tint = c.answer) }
         Chevrons(right = false, tint = c.decline)
@@ -669,7 +672,7 @@ fun PopMenu(expanded: Boolean, onDismiss: () -> Unit, content: @Composable Colum
     val c = LocalColors.current
     val motion = rememberMotionEnabled()
     val density = LocalDensity.current
-    val shape = RoundedCornerShape(22.dp)
+    val shape = RoundedCornerShape(Radii.lg)
     val visible = remember { MutableTransitionState(!motion).apply { targetState = true } }
     androidx.compose.ui.window.Popup(
         alignment = Alignment.TopEnd,
@@ -699,7 +702,7 @@ fun PopItem(label: String, onClick: () -> Unit, icon: ImageVector? = null, selec
     val c = LocalColors.current
     val tint = when { danger -> c.decline; selected -> c.accent; else -> c.ink }
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 6.dp).clip(RoundedCornerShape(16.dp))
+        Modifier.fillMaxWidth().padding(horizontal = 6.dp).clip(RoundedCornerShape(Radii.inner(Radii.lg, 6.dp)))
             .background(if (selected) c.accent.copy(alpha = 0.12f) else Color.Transparent)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .heightIn(min = 48.dp).padding(horizontal = 12.dp).alpha(if (enabled) 1f else 0.38f),

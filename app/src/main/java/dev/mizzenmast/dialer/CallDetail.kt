@@ -80,7 +80,7 @@ fun CallDetailScreen(vm: DialerViewModel, actions: Actions, e: LogEntry, contact
     var numberMenu by remember { mutableStateOf(false) }
     if (numberMenu) NumberMenu(number, contact?.name ?: e.name, contact?.photo, onEdit = { actions.editBeforeCall(number) },
         onAddContact = if (contact == null) { { actions.addContact(number) } } else null, onDismiss = { numberMenu = false })
-    val numberHold = if (number.isNotBlank()) Modifier.clip(RoundedCornerShape(12.dp))
+    val numberHold = if (number.isNotBlank()) Modifier.clip(RoundedCornerShape(Radii.sm))
         .combinedClickable(onLongClickLabel = "Number options", onLongClick = { numberMenu = true }, onClick = {}) else Modifier
     LaunchedEffect(number) { if (number.isNotBlank()) blocked = withContext(Dispatchers.IO) { BlockedRepo.isBlocked(ctx, number) } }
     val starred = contact != null && contact.id in starredIds
@@ -179,7 +179,7 @@ fun CallHistoryScreen(vm: DialerViewModel, actions: Actions, e: LogEntry, contac
         }
         // Total over everything with this person, whatever the filter below shows.
         if (talkSec > 0) Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp).clip(RoundedCornerShape(22.dp)).background(c.surface).padding(16.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp).clip(RoundedCornerShape(Radii.lg)).background(c.surface).padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(Modifier.size(44.dp).clip(CircleShape).background(c.accent.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {

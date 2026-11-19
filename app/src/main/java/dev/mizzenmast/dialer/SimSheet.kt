@@ -87,7 +87,7 @@ private fun SimSheet(subject: String, rows: List<SimRow>, selected: String?, wit
             }
             Spacer(Modifier.width(16.dp))
             if (slot != null) {
-                Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.accent), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(28.dp).clip(RoundedCornerShape(Radii.xs)).background(c.accent), contentAlignment = Alignment.Center) {
                     Text("$slot", color = c.onAccent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(Modifier.width(14.dp))
@@ -101,20 +101,20 @@ private fun SimSheet(subject: String, rows: List<SimRow>, selected: String?, wit
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        shape = RoundedCornerShape(topStart = Radii.sheet, topEnd = Radii.sheet),
         dragHandle = { Box(Modifier.padding(top = 12.dp, bottom = 8.dp).size(width = 40.dp, height = 4.dp).clip(CircleShape).background(c.line)) },
         containerColor = c.bg, contentColor = c.ink
     ) {
         Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp)) {
             Text("CALL WITH", style = T.label, color = c.accent, modifier = Modifier.padding(start = 12.dp))
             Text(subject, color = c.inkDim, fontSize = 14.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp, bottom = 12.dp))
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.surface)) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(Radii.lg)).background(c.surface)) {
                 if (withDefault) Option(null, null, "Default", "Use your device's default SIM", selected == null)
                 rows.forEach { Option(it.key, it.slot, it.title, it.sub, it.key == selected) }
             }
             Spacer(Modifier.height(12.dp))
             Box(
-                Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(c.surface).clickable(role = Role.Button, onClick = onDismiss),
+                Modifier.fillMaxWidth().height(56.dp).clip(Radii.pill).background(c.surface).clickable(role = Role.Button, onClick = onDismiss),
                 contentAlignment = Alignment.Center
             ) { Text("Cancel", color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.Medium) }
         }

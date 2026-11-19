@@ -258,7 +258,7 @@ fun OnboardingScreen(vm: DialerViewModel, actions: Actions) {
                             Triple("Light", "Always use light theme", 1),
                             Triple("Dark", "Always use dark theme", 2)
                         )
-                        val shape = RoundedCornerShape(16.dp)
+                        val shape = RoundedCornerShape(Radii.md)
                         Column(Modifier.fillMaxWidth().clip(shape).background(c.surface).border(1.dp, c.line, shape)) {
                             options.forEachIndexed { idx, (name, sub, value) ->
                                 if (idx > 0) HorizontalDivider(color = c.line)
@@ -397,7 +397,7 @@ private fun OverviewTop(done: List<Boolean>, onBack: (() -> Unit)?, onSkip: () -
             if (onBack != null) IconAction(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
             Spacer(Modifier.weight(1f))
             Box(
-                Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClick = onSkip).padding(horizontal = 8.dp),
+                Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(Radii.sm)).clickable(role = Role.Button, onClick = onSkip).padding(horizontal = 8.dp),
                 contentAlignment = Alignment.Center
             ) { Text("Skip", color = c.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium) }
         }
@@ -411,7 +411,7 @@ private fun OverviewTop(done: List<Boolean>, onBack: (() -> Unit)?, onSkip: () -
 private fun PrimaryButton(text: String, onClick: () -> Unit, icon: ImageVector? = null) {
     val c = LocalColors.current
     Row(
-        Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(20.dp)).background(c.ink).clickable(role = Role.Button, onClick = onClick),
+        Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(Radii.md)).background(c.ink).clickable(role = Role.Button, onClick = onClick),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
     ) {
         Text(text, color = c.bg, fontSize = 16.sp, fontWeight = FontWeight.Medium)
@@ -426,7 +426,7 @@ private fun PrimaryButton(text: String, onClick: () -> Unit, icon: ImageVector? 
 private fun QuietButton(text: String, onClick: () -> Unit) {
     val c = LocalColors.current
     Box(
-        Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(16.dp)).clickable(role = Role.Button, onClick = onClick),
+        Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(Radii.md)).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center
     ) { Text(text, color = c.ink, fontSize = 15.sp, fontWeight = FontWeight.Medium) }
 }
@@ -434,7 +434,7 @@ private fun QuietButton(text: String, onClick: () -> Unit) {
 @Composable
 private fun WhyCard(icon: ImageVector, text: String) {
     val c = LocalColors.current
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(Radii.md)
     Row(Modifier.fillMaxWidth().clip(shape).background(c.surface).border(1.dp, c.line, shape).padding(16.dp)) {
         Box(Modifier.size(40.dp).clip(CircleShape).background(c.accent.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = c.accent, modifier = Modifier.size(22.dp))
@@ -454,7 +454,7 @@ private class CheckRow(val step: Step, val icon: ImageVector, val title: String,
 @Composable
 private fun ChecklistCard(rows: List<CheckRow>, readyLabel: String, pendingLabel: String, onOpen: (CheckRow) -> Unit) {
     val c = LocalColors.current
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(Radii.md)
     Column(Modifier.fillMaxWidth().clip(shape).background(c.surface).border(1.dp, c.line, shape)) {
         rows.forEachIndexed { idx, r ->
             if (idx > 0) HorizontalDivider(color = c.line)
@@ -490,7 +490,7 @@ private fun ChecklistCard(rows: List<CheckRow>, readyLabel: String, pendingLabel
 @Composable
 private fun SummaryCard(rows: List<Pair<String, Boolean>>) {
     val c = LocalColors.current
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(Radii.md)
     Column(
         Modifier.fillMaxWidth().clip(shape).background(c.answer.copy(alpha = 0.08f)).border(1.dp, c.answer.copy(alpha = 0.25f), shape)
             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -558,7 +558,7 @@ private fun WelcomeScreen(onStart: () -> Unit) {
             Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                 Spacer(Modifier.weight(1f))
                 Row(
-                    Modifier.height(56.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xFFE4EFEA)).clickable(role = Role.Button, onClick = onStart).padding(horizontal = 28.dp),
+                    Modifier.height(56.dp).clip(Radii.pill).background(Color(0xFFE4EFEA)).clickable(role = Role.Button, onClick = onStart).padding(horizontal = 28.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Get started", color = Color(0xFF0C211D), fontSize = 16.sp, fontWeight = FontWeight.Medium)
@@ -623,7 +623,7 @@ private fun PhoneArt(height: Dp = 156.dp) {
 @Composable
 private fun SkeletonCard(modifier: Modifier, dots: List<Color>) {
     val c = LocalColors.current
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(Radii.md)
     Column(
         modifier.size(160.dp, 112.dp).clip(shape).background(c.surface).border(1.dp, c.line, shape).padding(14.dp),
         verticalArrangement = Arrangement.SpaceEvenly
@@ -684,7 +684,7 @@ private fun LockScreenArt() {
             Text("9:30", color = c.bg, fontSize = 26.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(18.dp))
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(c.surface).padding(6.dp),
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(Radii.inner(18.dp, 12.dp))).background(c.surface).padding(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Badge(Modifier, c.answer, Icons.Rounded.Call, size = 18.dp)

@@ -10,7 +10,12 @@ object Prefs {
     val theme = MutableStateFlow(0) // 0 system, 1 light, 2 dark
     val haptics = MutableStateFlow(true)
     val keypadTones = MutableStateFlow(true)
+    /** The animated arrows on the incoming-call answer/decline slider. */
     val gestureHints = MutableStateFlow(true)
+    /** Android 12+: take the accent color from the wallpaper instead of the app's own green. */
+    val dynamicColor = MutableStateFlow(false)
+    /** The quiet "No answer / Busy / Declined" notification after an outgoing call, with Call again and a reminder. */
+    val followUps = MutableStateFlow(true)
     val directLaunch = MutableStateFlow(true)
     val diagnostics = MutableStateFlow(true)
     val showFavorites = MutableStateFlow(true)
@@ -31,6 +36,8 @@ object Prefs {
         haptics.value = p.getBoolean("haptics", true)
         keypadTones.value = p.getBoolean("keypad_tones", true)
         gestureHints.value = p.getBoolean("gesture_hints", true)
+        dynamicColor.value = p.getBoolean("dynamic_color", false)
+        followUps.value = p.getBoolean("follow_up_notifications", true)
         directLaunch.value = p.getBoolean("direct_launch", true)
         diagnostics.value = p.getBoolean("diagnostics", true)
         showFavorites.value = p.getBoolean("show_favorites_row", true)

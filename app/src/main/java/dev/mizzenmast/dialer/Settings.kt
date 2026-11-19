@@ -85,6 +85,8 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
     val haptics by Prefs.haptics.collectAsState()
     val tones by Prefs.keypadTones.collectAsState()
     val hints by Prefs.gestureHints.collectAsState()
+    val followUps by Prefs.followUps.collectAsState()
+    val dynamic by Prefs.dynamicColor.collectAsState()
     val direct by Prefs.directLaunch.collectAsState()
     val diag by Prefs.diagnostics.collectAsState()
     val silence by Prefs.silenceUnknown.collectAsState()
@@ -135,17 +137,24 @@ fun SettingsScreen(vm: DialerViewModel, actions: Actions) {
             ToggleRow(Icons.Rounded.Sms, "Reply on WhatsApp", "Decline with a message opens a WhatsApp chat instead of sending an SMS", waReply) {
                 Prefs.set("reply_whatsapp", Prefs.replyViaWhatsApp, it)
             }
+            ToggleRow(Icons.Rounded.Notifications, "Unanswered-call follow-ups", "After a call nobody picks up, show a quiet notification with Call again", followUps) {
+                Prefs.set("follow_up_notifications", Prefs.followUps, it)
+                if (!it) CallNotifications.clearFollowUps(ctx)
+            }
             NavRow(Icons.Rounded.Notifications, "Call notifications", "Alerts and notification behavior") { actions.open(SettingsTarget.Notifications) }
         }
 
         SettingsSection("Appearance & interaction", "Make it feel like home") {
             NavRow(Icons.Rounded.Palette, "Theme", "System, light or dark", value = ThemeNames[theme.coerceIn(0, 2)]) { themeDialog = true }
+            if (android.os.Build.VERSION.SDK_INT >= 31) ToggleRow(Icons.Rounded.Palette, "Wallpaper colors", "Use your wallpaper's accent color instead of green", dynamic) {
+                Prefs.set("dynamic_color", Prefs.dynamicColor, it)
+            }
             ToggleRow(Icons.Rounded.Star, "Favorites in Recents", "Show starred contacts at the top of Recents", showFavorites) {
                 Prefs.set("show_favorites_row", Prefs.showFavorites, it)
             }
             ToggleRow(Icons.Rounded.Vibration, "Haptic feedback", null, haptics) { Prefs.set("haptics", Prefs.haptics, it) }
             ToggleRow(Icons.Rounded.MusicNote, "Keypad tones", null, tones) { Prefs.set("keypad_tones", Prefs.keypadTones, it) }
-            ToggleRow(Icons.Rounded.TouchApp, "Incoming-call swipe hints", null, hints) { Prefs.set("gesture_hints", Prefs.gestureHints, it) }
+            ToggleRow(Icons.Rounded.TouchApp, "Swipe arrows", "Animated arrows on the answer / decline slider", hints) { Prefs.set("gesture_hints", Prefs.gestureHints, it) }
         }
 
         SettingsSection("Reliability", "Keep your dialer running smoothly") {
@@ -334,13 +343,13 @@ private fun StatusPill(text: String, ready: Boolean, onClick: (() -> Unit)? = nu
     @Composable
     fun Pill() {
         Box(
-            Modifier.clip(RoundedCornerShape(14.dp)).background(if (ready) c.accent.copy(alpha = 0.16f) else c.accent).padding(horizontal = 12.dp, vertical = 5.dp)
+            Modifier.clip(Radii.pill).background(if (ready) c.accent.copy(alpha = 0.16f) else c.accent).padding(horizontal = 12.dp, vertical = 5.dp)
         ) {
             Text(text, color = if (ready) c.accent else c.onAccent, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
     }
     if (onClick == null) Pill()
-    else Box(Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(24.dp)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 4.dp), contentAlignment = Alignment.Center) { Pill() }
+    else Box(Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(Radii.lg)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 4.dp), contentAlignment = Alignment.Center) { Pill() }
 }
 
 @Composable
@@ -348,7 +357,7 @@ private fun ThemeDialog(current: Int, onDismiss: () -> Unit) {
     val c = LocalColors.current
     val options = listOf("Match your phone's setting", "Always light", "Always dark")
     Dialog(onDismissRequest = onDismiss) {
-        Column(Modifier.clip(RoundedCornerShape(24.dp)).background(c.surface).padding(vertical = 12.dp)) {
+        Column(Modifier.clip(RoundedCornerShape(Radii.lg)).background(c.surface).padding(vertical = 12.dp)) {
             Text("Theme", color = c.ink, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 8.dp))
             ThemeNames.forEachIndexed { i, name ->
                 val on = i == current
